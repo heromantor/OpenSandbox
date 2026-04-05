@@ -10,8 +10,8 @@ This roadmap builds a Firecracker runtime backend for OpenSandbox from first pri
 - Integer phases (1, 2, 3, ...): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: VM Lifecycle and Jailer** - Firecracker VM create/start/stop/destroy with production Jailer isolation
-- [ ] **Phase 2: Rootfs and Image Management** - ext4 rootfs provisioning from OCI images, stored locally, shareable across instances
+- [x] **Phase 1: VM Lifecycle and Jailer** - Firecracker VM create/start/stop/destroy with production Jailer isolation
+- [x] **Phase 2: Rootfs and Image Management** - ext4 rootfs provisioning from OCI images, stored locally, shareable across instances
 - [ ] **Phase 3: vsock and Execd Transport** - Host-guest vsock channel; execd listens on vsock; host proxy with CONNECT handshake
 - [ ] **Phase 4: TAP Networking and Egress** - Per-VM TAP devices, iptables NAT, DNS, FQDN egress proxy integration
 - [ ] **Phase 5: Snapshot Creation** - Full and diff snapshot creation with version metadata; pause/resume sequencing
@@ -48,7 +48,11 @@ Plans:
   1. A rootfs image can be built from a named OCI image and stored in a configurable local path
   2. Multiple VMs can boot from the same base rootfs image without filesystem conflicts
   3. The provisioning path is deterministic — the same OCI image tag produces the same ext4 image
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [x] 02-01-PLAN.md — Image subpackage foundation: config, store, reference parsing, error types
+- [x] 02-02-PLAN.md — Provisioner pipeline: crane.Pull + crane.Export + tar2ext4 + atomic cache write
+- [x] 02-03-PLAN.md — VMConfig.ReadOnlyRootfs wiring + integration test + Makefile targets
 
 ### Phase 3: vsock and Execd Transport
 **Goal**: Host and guest communicate over vsock; execd inside the guest is reachable from the host after boot
@@ -146,7 +150,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. VM Lifecycle and Jailer | 0/3 | Planned | - |
+| 1. VM Lifecycle and Jailer | 4/4 | Complete | 2026-04-05 |
 | 2. Rootfs and Image Management | 0/TBD | Not started | - |
 | 3. vsock and Execd Transport | 0/TBD | Not started | - |
 | 4. TAP Networking and Egress | 0/TBD | Not started | - |
