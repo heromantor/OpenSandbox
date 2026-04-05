@@ -1,0 +1,4 @@
+# Downloaded kernel artifacts (fetched via `make fetch-kernel`).
+# Never commit these; they are reproducible from DefaultKernelURL.
+kernel/
+coverage.out
