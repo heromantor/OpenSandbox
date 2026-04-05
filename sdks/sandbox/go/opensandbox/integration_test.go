@@ -1077,16 +1077,14 @@ func TestIntegration_Negative_SessionAfterDelete(t *testing.T) {
 	}
 	t.Log("Deleted session")
 
-	// Try to run in the deleted session — some server implementations
-	// silently re-create the session, so accept both error and success.
+	// The server silently re-creates deleted sessions, so this succeeds.
 	_, err = sb.RunInSession(ctx, sess.ID, opensandbox.RunInSessionRequest{
 		Command: "echo should-fail",
 	}, nil)
 	if err != nil {
-		t.Logf("RunInSession(deleted session): %v (expected error)", err)
-	} else {
-		t.Log("RunInSession(deleted session): server accepted (session may have been re-created)")
+		t.Fatalf("RunInSession(deleted session): unexpected error: %v", err)
 	}
+	t.Log("RunInSession(deleted session): server re-created session as expected")
 
 	t.Log("Negative session test passed")
 }
@@ -1119,17 +1117,15 @@ func TestIntegration_Negative_CodeContextAfterDelete(t *testing.T) {
 	}
 	t.Log("Deleted context")
 
-	// Try to execute in the deleted context — some server implementations
-	// re-create the context on demand, so accept both error and success.
+	// The server silently re-creates deleted contexts, so this succeeds.
 	_, err = sb.ExecuteCode(ctx, opensandbox.RunCodeRequest{
 		Context: &opensandbox.CodeContext{ID: codeCtx.ID, Language: "python"},
 		Code:    "print('should fail')",
 	}, nil)
 	if err != nil {
-		t.Logf("ExecuteCode(deleted context): %v (expected error)", err)
-	} else {
-		t.Log("ExecuteCode(deleted context): server accepted (context may have been re-created)")
+		t.Fatalf("ExecuteCode(deleted context): unexpected error: %v", err)
 	}
+	t.Log("ExecuteCode(deleted context): server re-created context as expected")
 
 	// Also try GetContext on the deleted ID
 	_, err = sb.ListContexts(ctx, "python")
