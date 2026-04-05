@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -152,5 +153,90 @@ func TestManagerDestroy_NotFound(t *testing.T) {
 	var nfErr *VMNotFoundError
 	if !errors.As(err, &nfErr) {
 		t.Fatalf("expected VMNotFoundError, got %T: %v", err, err)
+	}
+}
+
+// skipIfCreateFails is a helper that creates a VM and skips the test if
+// sdk.NewMachine fails (expected on non-Linux or when Firecracker is absent).
+func skipIfCreateFails(t *testing.T, mgr *Manager, cfg VMConfig) *VM {
+	t.Helper()
+	vm, err := mgr.Create(context.Background(), cfg)
+	if err != nil {
+		if runtime.GOOS != "linux" {
+			t.Skipf("Manager.Create requires Linux: %v", err)
+		}
+		t.Fatalf("Create failed: %v", err)
+	}
+	return vm
+}
+
+func TestManager_Create_AutoAssignsCID(t *testing.T) {
+	mgr := NewManager(ManagerConfig{})
+	cfg := validConfig(t)
+	cfg.VsockCID = 0 // auto-assign
+
+	vm := skipIfCreateFails(t, mgr, cfg)
+
+	if vm.VsockCID < MinGuestCID {
+		t.Errorf("expected VsockCID >= %d, got %d", MinGuestCID, vm.VsockCID)
+	}
+}
+
+func TestManager_Create_TwoCIDsUnique(t *testing.T) {
+	mgr := NewManager(ManagerConfig{})
+
+	cfg1 := validConfig(t)
+	cfg1.VsockCID = 0
+	vm1 := skipIfCreateFails(t, mgr, cfg1)
+
+	cfg2 := validConfig(t)
+	cfg2.VsockCID = 0
+	vm2 := skipIfCreateFails(t, mgr, cfg2)
+
+	if vm1.VsockCID == vm2.VsockCID {
+		t.Errorf("expected unique CIDs, both got %d", vm1.VsockCID)
+	}
+}
+
+func TestManager_Create_ExplicitCID(t *testing.T) {
+	mgr := NewManager(ManagerConfig{})
+	cfg := validConfig(t)
+	cfg.VsockCID = 42
+
+	vm := skipIfCreateFails(t, mgr, cfg)
+
+	if vm.VsockCID != 42 {
+		t.Errorf("expected VsockCID=42, got %d", vm.VsockCID)
+	}
+}
+
+func TestManager_Create_SetsVsockUDSPath(t *testing.T) {
+	mgr := NewManager(ManagerConfig{})
+	cfg := validConfig(t)
+	cfg.VsockCID = 0
+
+	vm := skipIfCreateFails(t, mgr, cfg)
+
+	if vm.VsockUDSPath == "" {
+		t.Error("expected non-empty VsockUDSPath")
+	}
+	if !strings.Contains(vm.VsockUDSPath, vm.ID) {
+		t.Errorf("expected VsockUDSPath to contain VM ID %q, got %q", vm.ID, vm.VsockUDSPath)
+	}
+}
+
+func TestManager_Create_TracksVsockUDSInResources(t *testing.T) {
+	mgr := NewManager(ManagerConfig{})
+	cfg := validConfig(t)
+	cfg.VsockCID = 0
+
+	vm := skipIfCreateFails(t, mgr, cfg)
+
+	if vm.Resources.VsockUDSPath == "" {
+		t.Error("expected non-empty Resources.VsockUDSPath")
+	}
+	if vm.Resources.VsockUDSPath != vm.VsockUDSPath {
+		t.Errorf("expected Resources.VsockUDSPath=%q to match VsockUDSPath=%q",
+			vm.Resources.VsockUDSPath, vm.VsockUDSPath)
 	}
 }
