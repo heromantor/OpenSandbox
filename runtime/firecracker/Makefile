@@ -1,4 +1,4 @@
-.PHONY: all build vet test test-integration lint clean fmt check fetch-kernel verify-kernel
+.PHONY: all build vet test test-integration lint clean fmt check fetch-kernel verify-kernel image-test-integration image-fetch-test
 
 # Kernel image download/verification targets. The URL and SHA256 here MUST
 # stay in sync with DefaultKernelURL / DefaultKernelSHA256 in kernel.go.
@@ -65,3 +65,22 @@ verify-kernel:
 		echo "kernel checksum MISMATCH: expected $(KERNEL_SHA256), got $$ACTUAL"; \
 		exit 1; \
 	fi
+
+# image-test-integration runs the Phase 2 integration test that pulls
+# a small OCI image end-to-end. Requires network access.
+# Uses public.ecr.aws (no anonymous rate limit) for reliability.
+image-test-integration:
+	go test -tags=integration ./image/... -v -timeout 3m -run TestIntegrationProvision
+
+# image-fetch-test pre-pulls the integration-test OCI image into a local
+# directory so the integration test can run offline on subsequent calls.
+# Uses crane via `go run` so no extra binary is required.
+IMAGE_FETCH_REF ?= public.ecr.aws/docker/library/alpine:3.19
+IMAGE_FETCH_DIR ?= image/testdata/oci-cache
+image-fetch-test:
+	@mkdir -p $(IMAGE_FETCH_DIR)
+	@echo "pre-pulling $(IMAGE_FETCH_REF) into $(IMAGE_FETCH_DIR)"
+	@go run github.com/google/go-containerregistry/cmd/crane@latest pull \
+		--platform linux/amd64 \
+		$(IMAGE_FETCH_REF) $(IMAGE_FETCH_DIR)/alpine.tar
+	@echo "done: $(IMAGE_FETCH_DIR)/alpine.tar"
