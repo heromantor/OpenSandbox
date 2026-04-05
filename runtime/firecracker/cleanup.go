@@ -20,6 +20,8 @@ type VMResources struct {
 	LogFifoPath string
 	// MetricsFifoPath is the path to the metrics FIFO.
 	MetricsFifoPath string
+	// VsockUDSPath is the path to the vsock Unix domain socket.
+	VsockUDSPath string
 }
 
 // Cleanup removes all tracked resources. Errors from individual cleanup
@@ -34,6 +36,14 @@ func (r *VMResources) Cleanup() error {
 		if err := os.Remove(r.SocketPath); err != nil && !os.IsNotExist(err) {
 			result = multierror.Append(result,
 				fmt.Errorf("remove socket %s: %w", r.SocketPath, err))
+		}
+	}
+
+	// Remove vsock UDS file.
+	if r.VsockUDSPath != "" {
+		if err := os.Remove(r.VsockUDSPath); err != nil && !os.IsNotExist(err) {
+			result = multierror.Append(result,
+				fmt.Errorf("remove vsock uds %s: %w", r.VsockUDSPath, err))
 		}
 	}
 
@@ -82,5 +92,6 @@ func (r *VMResources) IsEmpty() bool {
 		r.ChrootDir == "" &&
 		len(r.CgroupPaths) == 0 &&
 		r.LogFifoPath == "" &&
-		r.MetricsFifoPath == ""
+		r.MetricsFifoPath == "" &&
+		r.VsockUDSPath == ""
 }

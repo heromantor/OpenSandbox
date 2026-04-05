@@ -57,6 +57,10 @@ type VMConfig struct {
 	CPUTemplate CPUTemplateConfig
 	// TrackDirtyPages enables dirty page tracking for future diff snapshots.
 	TrackDirtyPages bool
+	// VsockCID is the 32-bit Context Identifier for the vsock device.
+	// Must be >= 3 (CID 0=hypervisor, 1=reserved, 2=host). When 0, the
+	// Manager auto-assigns a CID from its CIDAllocator.
+	VsockCID uint32
 	// JailerEnabled runs the VM inside Jailer (recommended for production).
 	JailerEnabled bool
 	// Jailer holds the jailer configuration (used when JailerEnabled=true).
@@ -104,6 +108,21 @@ func (c *VMConfig) Validate() error {
 		return &InvalidVMConfigError{
 			Field:   "RootfsPath",
 			Message: "must not be empty",
+		}
+	}
+	if c.VsockCID != 0 && c.VsockCID < MinGuestCID {
+		return &InvalidVMConfigError{
+			Field:   "VsockCID",
+			Message: fmt.Sprintf("must be >= %d (0=auto, 1=reserved, 2=host), got %d", MinGuestCID, c.VsockCID),
+		}
+	}
+	if c.VsockCID >= MinGuestCID || c.VsockCID == 0 {
+		udsPath := vsockUDSPath(c.ID, c.JailerEnabled)
+		if !c.JailerEnabled && len(udsPath) > maxUnixSocketPathLen {
+			return &InvalidVMConfigError{
+				Field:   "VsockUDSPath",
+				Message: fmt.Sprintf("path too long (%d chars, max %d): %s", len(udsPath), maxUnixSocketPathLen, udsPath),
+			}
 		}
 	}
 	return nil
@@ -161,6 +180,10 @@ type VM struct {
 	SocketPath string
 	// Resources tracks all resources needing cleanup.
 	Resources VMResources
+	// VsockCID is the assigned guest Context Identifier.
+	VsockCID uint32
+	// VsockUDSPath is the host-side Unix domain socket path for vsock.
+	VsockUDSPath string
 
 	// mu protects mutable VM fields during concurrent access.
 	mu sync.Mutex

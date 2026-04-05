@@ -111,3 +111,50 @@ func TestVsockUDSPath_LengthValidation(t *testing.T) {
 		t.Fatalf("path %q does not end with %q", path, expectedSuffix)
 	}
 }
+
+func TestVMConfigValidate_VsockCID_RejectsReserved(t *testing.T) {
+	tests := []struct {
+		name string
+		cid  uint32
+	}{
+		{"cid_1", 1},
+		{"cid_2", 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig(t)
+			cfg.VsockCID = tt.cid
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("expected error for VsockCID=%d, got nil", tt.cid)
+			}
+			if !strings.Contains(err.Error(), "VsockCID") {
+				t.Errorf("error should mention VsockCID, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestVMConfigValidate_VsockCID_AcceptsZero(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.VsockCID = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("VsockCID=0 (auto) should be valid, got: %v", err)
+	}
+}
+
+func TestVMConfigValidate_VsockCID_AcceptsMinimum(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.VsockCID = MinGuestCID
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("VsockCID=%d should be valid, got: %v", MinGuestCID, err)
+	}
+}
+
+func TestVMConfigValidate_VsockCID_AcceptsLarge(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.VsockCID = 1000
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("VsockCID=1000 should be valid, got: %v", err)
+	}
+}

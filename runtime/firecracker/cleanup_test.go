@@ -179,3 +179,30 @@ func TestVMResourcesIsEmpty_HasMetricsFifo(t *testing.T) {
 		t.Error("expected IsEmpty()=false when MetricsFifoPath is set")
 	}
 }
+
+func TestVMResourcesCleanup_RemovesVsockUDS(t *testing.T) {
+	dir := t.TempDir()
+	vsockPath := filepath.Join(dir, "vsock.sock")
+	if err := os.WriteFile(vsockPath, []byte("vsock-data"), 0644); err != nil {
+		t.Fatalf("write vsock file: %v", err)
+	}
+
+	resources := &VMResources{
+		VsockUDSPath: vsockPath,
+	}
+
+	if err := resources.Cleanup(); err != nil {
+		t.Fatalf("Cleanup returned error: %v", err)
+	}
+
+	if _, err := os.Stat(vsockPath); !os.IsNotExist(err) {
+		t.Error("expected vsock UDS file to be removed after Cleanup")
+	}
+}
+
+func TestVMResourcesIsEmpty_HasVsockUDS(t *testing.T) {
+	resources := &VMResources{VsockUDSPath: "/tmp/vsock.sock"}
+	if resources.IsEmpty() {
+		t.Error("expected IsEmpty()=false when VsockUDSPath is set")
+	}
+}
