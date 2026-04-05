@@ -13,12 +13,24 @@ import (
 // suitable for creating a Machine. If JailerEnabled, the JailerCfg is populated
 // from resolveJailerConfig.
 func (c *VMConfig) toFirecrackerConfig() (sdk.Config, error) {
+	// Build the root drive. When ReadOnlyRootfs is true, pass WithReadOnly
+	// so Firecracker opens the ext4 file read-only — multiple VMs can then
+	// safely share the same image file (Phase 2, IMG-03).
+	var drives []models.Drive
+	if c.ReadOnlyRootfs {
+		drives = sdk.NewDrivesBuilder("").
+			WithRootDrive(c.RootfsPath, sdk.WithReadOnly(true)).
+			Build()
+	} else {
+		drives = sdk.NewDrivesBuilder(c.RootfsPath).Build()
+	}
+
 	cfg := sdk.Config{
 		VMID:            c.ID,
 		SocketPath:      c.socketPath(),
 		KernelImagePath: c.KernelImagePath,
 		KernelArgs:      c.KernelArgs,
-		Drives:          sdk.NewDrivesBuilder(c.RootfsPath).Build(),
+		Drives:          drives,
 		MachineCfg: models.MachineConfiguration{
 			VcpuCount:       sdk.Int64(c.VCPUs),
 			MemSizeMib:      sdk.Int64(c.MemoryMiB),

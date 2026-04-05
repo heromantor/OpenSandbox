@@ -42,6 +42,15 @@ type VMConfig struct {
 	KernelImagePath string
 	// RootfsPath is the path to the root filesystem ext4 image (required).
 	RootfsPath string
+	// ReadOnlyRootfs marks the root drive as read-only. When true, Firecracker
+	// opens the rootfs ext4 file read-only and multiple VMs can safely share
+	// the same image file without filesystem conflicts. Default false (Phase 1
+	// writable behavior). Recommended true for images produced by the
+	// runtime/firecracker/image Provisioner. Added in Phase 2 for IMG-03.
+	// Note: zero-value (false) is the correct default — no entry needed in
+	// withDefaults(). Phase 1 consumers get writable drives; Phase 2 consumers
+	// opt in explicitly.
+	ReadOnlyRootfs bool
 	// KernelArgs are the kernel boot arguments (default: "console=ttyS0 reboot=k panic=1 pci=off").
 	KernelArgs string
 	// CPUTemplate configures CPU template for snapshot portability.
