@@ -55,5 +55,14 @@ func (c *VMConfig) toFirecrackerConfig() (sdk.Config, error) {
 		cfg.JailerCfg = resolved.toSDKConfig()
 	}
 
+	// Configure vsock device if CID is assigned.
+	if c.VsockCID >= MinGuestCID {
+		cfg.VsockDevices = []sdk.VsockDevice{{
+			ID:   "vsock0",
+			Path: vsockUDSPath(c.ID, c.JailerEnabled),
+			CID:  c.VsockCID,
+		}}
+	}
+
 	return cfg, nil
 }
