@@ -22,6 +22,12 @@ type VMResources struct {
 	MetricsFifoPath string
 	// VsockUDSPath is the path to the vsock Unix domain socket.
 	VsockUDSPath string
+	// TAPDeviceName is the name of the TAP network device on the host.
+	// Cleaned up via netlink on Linux.
+	TAPDeviceName string
+	// NATRules are the per-VM iptables NAT/FORWARD rules.
+	// Cleaned up via go-iptables on Linux.
+	NATRules *NATRules
 }
 
 // Cleanup removes all tracked resources. Errors from individual cleanup
@@ -44,6 +50,13 @@ func (r *VMResources) Cleanup() error {
 		if err := os.Remove(r.VsockUDSPath); err != nil && !os.IsNotExist(err) {
 			result = multierror.Append(result,
 				fmt.Errorf("remove vsock uds %s: %w", r.VsockUDSPath, err))
+		}
+	}
+
+	// Remove TAP device and iptables rules (platform-specific).
+	if r.TAPDeviceName != "" || r.NATRules != nil {
+		if err := r.cleanupNetwork(); err != nil {
+			result = multierror.Append(result, err)
 		}
 	}
 
@@ -93,5 +106,7 @@ func (r *VMResources) IsEmpty() bool {
 		len(r.CgroupPaths) == 0 &&
 		r.LogFifoPath == "" &&
 		r.MetricsFifoPath == "" &&
-		r.VsockUDSPath == ""
+		r.VsockUDSPath == "" &&
+		r.TAPDeviceName == "" &&
+		r.NATRules == nil
 }

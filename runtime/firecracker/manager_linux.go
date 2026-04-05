@@ -16,11 +16,12 @@ import (
 // It maintains an in-memory registry of VMs and coordinates creation, startup,
 // shutdown, and destruction operations.
 type Manager struct {
-	config   ManagerConfig
-	vms      map[string]*VM
-	machines map[string]*sdk.Machine
-	cidAlloc *CIDAllocator
-	mu       sync.RWMutex
+	config      ManagerConfig
+	vms         map[string]*VM
+	machines    map[string]*sdk.Machine
+	cidAlloc    *CIDAllocator
+	subnetAlloc *SubnetIndexAllocator
+	mu          sync.RWMutex
 }
 
 // Compile-time interface check: Manager must implement VMManager.
@@ -31,10 +32,11 @@ var _ VMManager = (*Manager)(nil)
 func NewManager(cfg ManagerConfig) *Manager {
 	cfg = cfg.withDefaults()
 	return &Manager{
-		config:   cfg,
-		vms:      make(map[string]*VM),
-		machines: make(map[string]*sdk.Machine),
-		cidAlloc: NewCIDAllocator(MinGuestCID),
+		config:      cfg,
+		vms:         make(map[string]*VM),
+		machines:    make(map[string]*sdk.Machine),
+		cidAlloc:    NewCIDAllocator(MinGuestCID),
+		subnetAlloc: NewSubnetIndexAllocator(),
 	}
 }
 
@@ -47,6 +49,37 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 	// Auto-assign vsock CID if not explicitly set.
 	if cfg.VsockCID == 0 {
 		cfg.VsockCID = m.cidAlloc.Allocate()
+	}
+
+	// If NetworkConfig is provided, resolve host interface and subnet.
+	if cfg.NetworkConfig != nil {
+		// Auto-assign subnet index from the manager's allocator.
+		cfg.NetworkConfig.SubnetIndex = m.subnetAlloc.Allocate()
+
+		// Resolve host interface if not configured.
+		if cfg.NetworkConfig.HostInterface == "" {
+			if m.config.HostInterface != "" {
+				cfg.NetworkConfig.HostInterface = m.config.HostInterface
+			} else {
+				iface, err := DefaultHostInterface()
+				if err != nil {
+					return nil, fmt.Errorf("firecracker: create vm: detect host interface: %w", err)
+				}
+				cfg.NetworkConfig.HostInterface = iface
+			}
+		}
+
+		// Prepend egress proxy address as first nameserver if configured.
+		if m.config.EgressProxyAddr != "" {
+			cfg.NetworkConfig.Nameservers = append(
+				[]string{m.config.EgressProxyAddr},
+				cfg.NetworkConfig.Nameservers...,
+			)
+			// Trim to max 2 nameservers (SDK/kernel limit).
+			if len(cfg.NetworkConfig.Nameservers) > 2 {
+				cfg.NetworkConfig.Nameservers = cfg.NetworkConfig.Nameservers[:2]
+			}
+		}
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -66,8 +99,41 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 		return nil, &VMAlreadyExistsError{VMID: cfg.ID}
 	}
 
+	// Provision TAP device and iptables rules if network is configured.
+	var tapName string
+	var natRules *NATRules
+	if cfg.NetworkConfig != nil {
+		alloc, err := AllocateSubnet(cfg.NetworkConfig.SubnetIndex)
+		if err != nil {
+			return nil, fmt.Errorf("firecracker: create vm: %w", err)
+		}
+
+		tapName = TAPDeviceName(cfg.ID)
+		if err := CreateTAPDevice(tapName, alloc.HostIP, alloc.Subnet); err != nil {
+			return nil, fmt.Errorf("firecracker: create vm: %w", err)
+		}
+
+		natRules = &NATRules{
+			GuestIP:   alloc.GuestIP.String(),
+			TAPName:   tapName,
+			HostIface: cfg.NetworkConfig.HostInterface,
+		}
+		if err := natRules.Apply(); err != nil {
+			// Cleanup TAP on NAT failure.
+			_ = DeleteTAPDevice(tapName)
+			return nil, fmt.Errorf("firecracker: create vm: %w", err)
+		}
+	}
+
 	fcCfg, err := cfg.toFirecrackerConfig()
 	if err != nil {
+		// Clean up network resources on config failure.
+		if tapName != "" {
+			_ = DeleteTAPDevice(tapName)
+		}
+		if natRules != nil {
+			_ = natRules.Remove()
+		}
 		return nil, fmt.Errorf("firecracker: create vm: %w", err)
 	}
 
@@ -86,6 +152,13 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 
 	machine, err := sdk.NewMachine(ctx, fcCfg, sdk.WithLogger(log.NewEntry(logger)))
 	if err != nil {
+		// Clean up network resources on machine creation failure.
+		if tapName != "" {
+			_ = DeleteTAPDevice(tapName)
+		}
+		if natRules != nil {
+			_ = natRules.Remove()
+		}
 		return nil, &VMStartError{
 			VMID:  cfg.ID,
 			Cause: fmt.Errorf("create machine: %w", err),
@@ -113,16 +186,19 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 	}
 
 	vm := &VM{
-		ID:           cfg.ID,
-		State:        StateCreated,
-		Config:       cfg,
-		SocketPath:   socketPath,
-		VsockCID:     cfg.VsockCID,
-		VsockUDSPath: vsockPath,
+		ID:            cfg.ID,
+		State:         StateCreated,
+		Config:        cfg,
+		SocketPath:    socketPath,
+		VsockCID:      cfg.VsockCID,
+		VsockUDSPath:  vsockPath,
+		NetworkConfig: cfg.NetworkConfig,
 		Resources: VMResources{
-			SocketPath:   socketPath,
-			ChrootDir:    chrootDirPath,
-			VsockUDSPath: vsockPath,
+			SocketPath:    socketPath,
+			ChrootDir:     chrootDirPath,
+			VsockUDSPath:  vsockPath,
+			TAPDeviceName: tapName,
+			NATRules:      natRules,
 		},
 	}
 

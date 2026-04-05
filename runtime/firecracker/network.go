@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"sync/atomic"
 )
 
 const (
@@ -131,4 +132,21 @@ type NATRules struct {
 	GuestIP   string
 	TAPName   string
 	HostIface string
+}
+
+// SubnetIndexAllocator provides atomic, monotonically increasing subnet indices
+// for TAP network allocation. Each Allocate call returns a unique index starting
+// from 0, safe for concurrent use.
+type SubnetIndexAllocator struct {
+	next atomic.Uint32
+}
+
+// NewSubnetIndexAllocator creates a SubnetIndexAllocator that starts at 0.
+func NewSubnetIndexAllocator() *SubnetIndexAllocator {
+	return &SubnetIndexAllocator{}
+}
+
+// Allocate returns the next unique subnet index and advances the counter atomically.
+func (a *SubnetIndexAllocator) Allocate() uint32 {
+	return a.next.Add(1) - 1
 }
