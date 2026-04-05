@@ -184,6 +184,20 @@ func TestVMConfigValidate_ValidIDs(t *testing.T) {
 	}
 }
 
+func TestVMConfig_ReadOnlyRootfs_DefaultsFalse(t *testing.T) {
+	cfg := VMConfig{}.withDefaults()
+	if cfg.ReadOnlyRootfs {
+		t.Error("expected ReadOnlyRootfs=false by default (Phase 1 writable behavior)")
+	}
+}
+
+func TestVMConfig_ReadOnlyRootfs_Preserved(t *testing.T) {
+	cfg := VMConfig{ReadOnlyRootfs: true}.withDefaults()
+	if !cfg.ReadOnlyRootfs {
+		t.Error("expected ReadOnlyRootfs=true to be preserved after withDefaults")
+	}
+}
+
 func TestVMConfigDefaults(t *testing.T) {
 	cfg := VMConfig{}
 	filled := cfg.withDefaults()

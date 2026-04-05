@@ -2,3 +2,7 @@
 # Never commit these; they are reproducible from DefaultKernelURL.
 kernel/
 coverage.out
+
+# Phase 2: local rootfs cache and downloaded OCI test fixtures
+rootfs-cache/
+image/testdata/oci-*
