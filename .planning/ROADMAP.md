@@ -63,7 +63,11 @@ Plans:
   2. Each VM gets a unique CID — two VMs running concurrently on the same host never collide
   3. The host connects to execd via a Unix domain socket with the Firecracker CONNECT handshake protocol
   4. Each VM's vsock UDS path is unique per instance, established at creation with a scheme that is consistent with the snapshot restore path
-**Plans**: TBD
+**Plans:** 3 plans
+Plans:
+- [x] 03-01-PLAN.md — vsock foundation: CIDAllocator, UDS path helpers, VMConfig/VM/VMResources extensions, validation
+- [x] 03-02-PLAN.md — SDK VsockDevices wiring in toFirecrackerConfig + Manager CID auto-allocation
+- [x] 03-03-PLAN.md — HTTP-over-vsock transport (NewVsockHTTPClient) + execd health check (WaitForExecd)
 
 ### Phase 4: TAP Networking and Egress
 **Goal**: VMs have full network connectivity including DNS, outbound internet via NAT, and FQDN egress policy enforcement
@@ -152,7 +156,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 |-------|----------------|--------|-----------|
 | 1. VM Lifecycle and Jailer | 4/4 | Complete | 2026-04-05 |
 | 2. Rootfs and Image Management | 0/TBD | Not started | - |
-| 3. vsock and Execd Transport | 0/TBD | Not started | - |
+| 3. vsock and Execd Transport | 0/3 | Not started | - |
 | 4. TAP Networking and Egress | 0/TBD | Not started | - |
 | 5. Snapshot Creation | 0/TBD | Not started | - |
 | 6. Snapshot Restore | 0/TBD | Not started | - |
