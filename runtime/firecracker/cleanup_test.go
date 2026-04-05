@@ -206,3 +206,50 @@ func TestVMResourcesIsEmpty_HasVsockUDS(t *testing.T) {
 		t.Error("expected IsEmpty()=false when VsockUDSPath is set")
 	}
 }
+
+func TestVMResourcesIsEmpty_HasTAPDeviceName(t *testing.T) {
+	resources := &VMResources{TAPDeviceName: "tap-abc"}
+	if resources.IsEmpty() {
+		t.Error("expected IsEmpty()=false when TAPDeviceName is set")
+	}
+}
+
+func TestVMResourcesIsEmpty_HasNATRules(t *testing.T) {
+	resources := &VMResources{NATRules: &NATRules{
+		GuestIP:   "172.16.0.2",
+		TAPName:   "tap-abc",
+		HostIface: "eth0",
+	}}
+	if resources.IsEmpty() {
+		t.Error("expected IsEmpty()=false when NATRules is set")
+	}
+}
+
+func TestVMResourcesCleanup_EmptyNetworkFields(t *testing.T) {
+	// VMResources with empty TAPDeviceName and nil NATRules should not
+	// attempt network cleanup (backward compatibility).
+	resources := &VMResources{
+		TAPDeviceName: "",
+		NATRules:      nil,
+	}
+	if err := resources.Cleanup(); err != nil {
+		t.Fatalf("expected nil error for empty network fields, got: %v", err)
+	}
+}
+
+func TestSubnetIndexAllocator_Monotonic(t *testing.T) {
+	alloc := NewSubnetIndexAllocator()
+	first := alloc.Allocate()
+	second := alloc.Allocate()
+	third := alloc.Allocate()
+
+	if first != 0 {
+		t.Errorf("expected first allocation = 0, got %d", first)
+	}
+	if second != 1 {
+		t.Errorf("expected second allocation = 1, got %d", second)
+	}
+	if third != 2 {
+		t.Errorf("expected third allocation = 2, got %d", third)
+	}
+}
