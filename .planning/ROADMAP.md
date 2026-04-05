@@ -78,7 +78,10 @@ Plans:
   2. Outbound HTTP/S traffic from the guest reaches the internet via iptables NAT on the host
   3. FQDN-based egress policy from OpenSandbox's proxy is enforced — blocked domains are rejected inside the guest
   4. Stopping or crashing a VM removes its TAP device and iptables rules with no leftover netdev entries
-**Plans**: TBD
+**Plans:** 2 plans
+Plans:
+- [ ] 04-01-PLAN.md — Network foundation: types, /30 subnet allocator, TAP creation, iptables NAT, SDK NetworkInterfaces builder
+- [ ] 04-02-PLAN.md — VMConfig/Manager wiring, egress proxy DNS integration, cleanup extension
 
 ### Phase 5: Snapshot Creation
 **Goal**: A running VM's full state can be captured as a snapshot (full or diff), including version metadata required for safe restore
@@ -157,7 +160,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> 9 -> 10
 | 1. VM Lifecycle and Jailer | 4/4 | Complete | 2026-04-05 |
 | 2. Rootfs and Image Management | 0/TBD | Not started | - |
 | 3. vsock and Execd Transport | 0/3 | Not started | - |
-| 4. TAP Networking and Egress | 0/TBD | Not started | - |
+| 4. TAP Networking and Egress | 0/2 | Not started | - |
 | 5. Snapshot Creation | 0/TBD | Not started | - |
 | 6. Snapshot Restore | 0/TBD | Not started | - |
 | 7. Sandbox State Machine and TTL | 0/TBD | Not started | - |
