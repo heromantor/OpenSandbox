@@ -11,7 +11,18 @@ require (
 )
 
 require (
-	github.com/Microsoft/hcsshim v0.14.0
+	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
+	github.com/docker/cli v29.3.0+incompatible // indirect
+	github.com/docker/distribution v2.8.3+incompatible // indirect
+	github.com/docker/docker-credential-helpers v0.9.3 // indirect
+	github.com/klauspost/compress v1.18.4 // indirect
+	github.com/mitchellh/go-homedir v1.1.0 // indirect
+	github.com/opencontainers/image-spec v1.1.1 // indirect
+	github.com/vbatts/tar-split v0.12.2 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+)
+
+require (
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d // indirect
