@@ -7,12 +7,6 @@ import (
 	"time"
 )
 
-// ExecdPort is the guest-side port where the execd agent listens for
-// HTTP requests over vsock. This constant is defined here so that
-// vsock_health.go is self-contained; when vsock.go (from Plan 01) is
-// merged, this definition should be deduplicated.
-const ExecdPort uint32 = 44772
-
 // WaitForExecd blocks until the execd agent inside the guest responds to a
 // health check over vsock, or the context is canceled/timed out.
 //
