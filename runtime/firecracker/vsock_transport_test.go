@@ -32,12 +32,24 @@ func TestNewVsockHTTPClient_TransportType(t *testing.T) {
 func startMockVsockUDS(t *testing.T, port uint32, handler func(conn net.Conn)) string {
 	t.Helper()
 
-	sockPath := filepath.Join(t.TempDir(), "test-vsock.sock")
-	ln, err := net.Listen("unix", sockPath)
+	// Use os.CreateTemp in /tmp to keep the socket path under the 108-char
+	// limit imposed by Unix domain sockets on macOS/Linux.
+	f, err := os.CreateTemp("", "vsock-test-*.sock")
 	if err != nil {
-		t.Fatalf("listen unix: %v", err)
+		t.Fatalf("create temp file: %v", err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	sockPath := f.Name()
+	f.Close()
+	os.Remove(sockPath) // net.Listen needs a free path
+
+	ln, listenErr := net.Listen("unix", sockPath)
+	if listenErr != nil {
+		t.Fatalf("listen unix: %v", listenErr)
+	}
+	t.Cleanup(func() {
+		ln.Close()
+		os.Remove(sockPath)
+	})
 
 	go func() {
 		for {
@@ -60,7 +72,7 @@ func startMockVsockUDS(t *testing.T, port uint32, handler func(conn net.Conn)) s
 					return
 				}
 
-				// Write the OK response.
+				// Write the OK response (e.g., "OK 44772\n" for ExecdPort).
 				fmt.Fprintf(c, "OK %d\n", port)
 
 				// Hand off to the test-specific handler.
