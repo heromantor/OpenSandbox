@@ -4,11 +4,13 @@ go 1.25.7
 
 require (
 	github.com/Microsoft/hcsshim v0.14.0
+	github.com/coreos/go-iptables v0.8.0
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
 	github.com/google/go-containerregistry v0.21.3
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/sirupsen/logrus v1.9.4
+	github.com/vishvananda/netlink v1.3.1-0.20250303224720-0e7078ed04c8
 )
 
 require (
@@ -31,7 +33,6 @@ require (
 	github.com/containerd/fifo v1.1.0 // indirect
 	github.com/containernetworking/cni v1.0.1 // indirect
 	github.com/containernetworking/plugins v1.0.1 // indirect
-	github.com/coreos/go-iptables v0.8.0 // indirect
 	github.com/go-openapi/analysis v0.21.2 // indirect
 	github.com/go-openapi/errors v0.20.2 // indirect
 	github.com/go-openapi/jsonpointer v0.19.5 // indirect
@@ -54,7 +55,6 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/vishvananda/netlink v1.3.1-0.20250303224720-0e7078ed04c8 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	go.mongodb.org/mongo-driver v1.8.3 // indirect
 	go.opencensus.io v0.24.0 // indirect
