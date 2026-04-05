@@ -19,6 +19,7 @@ type Manager struct {
 	config   ManagerConfig
 	vms      map[string]*VM
 	machines map[string]*sdk.Machine
+	cidAlloc *CIDAllocator
 	mu       sync.RWMutex
 }
 
@@ -33,6 +34,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		config:   cfg,
 		vms:      make(map[string]*VM),
 		machines: make(map[string]*sdk.Machine),
+		cidAlloc: NewCIDAllocator(MinGuestCID),
 	}
 }
 
@@ -41,6 +43,11 @@ func NewManager(cfg ManagerConfig) *Manager {
 // instance. The VM is returned in StateCreated and must be started with Start().
 func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 	cfg = cfg.withDefaults()
+
+	// Auto-assign vsock CID if not explicitly set.
+	if cfg.VsockCID == 0 {
+		cfg.VsockCID = m.cidAlloc.Allocate()
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("firecracker: create vm: %w", err)
@@ -97,14 +104,25 @@ func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
 		socketPath = cfg.socketPath()
 	}
 
+	// Compute vsock UDS path. For non-jailed VMs the helper returns a full
+	// absolute path. For jailed VMs the helper returns a relative "vsock.sock"
+	// but we need the full host path for cleanup, so prepend the chroot dir.
+	vsockPath := vsockUDSPath(cfg.ID, cfg.JailerEnabled)
+	if cfg.JailerEnabled {
+		vsockPath = chrootDirPath + "/vsock.sock"
+	}
+
 	vm := &VM{
-		ID:         cfg.ID,
-		State:      StateCreated,
-		Config:     cfg,
-		SocketPath: socketPath,
+		ID:           cfg.ID,
+		State:        StateCreated,
+		Config:       cfg,
+		SocketPath:   socketPath,
+		VsockCID:     cfg.VsockCID,
+		VsockUDSPath: vsockPath,
 		Resources: VMResources{
-			SocketPath: socketPath,
-			ChrootDir:  chrootDirPath,
+			SocketPath:   socketPath,
+			ChrootDir:    chrootDirPath,
+			VsockUDSPath: vsockPath,
 		},
 	}
 
