@@ -4,7 +4,16 @@
 package image
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"os"
+	"strings"
+	"sync"
+
+	"github.com/Microsoft/hcsshim/ext4/tar2ext4"
+	"github.com/google/go-containerregistry/pkg/crane"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 )
 
 // DefaultRootfsCacheDir is the FHS-aligned default cache path.
@@ -66,4 +75,149 @@ func (c *ProvisionerConfig) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Provisioner builds ext4 rootfs images from OCI references and caches
+// them via the Store. Provisioner is safe for concurrent use.
+type Provisioner struct {
+	cfg     ProvisionerConfig
+	store   *Store
+	fetcher ImageFetcher
+
+	// digestCache maps canonical ref -> v1.Hash so repeated Provision
+	// calls for the same ref skip the network fetch entirely.
+	digestMu    sync.RWMutex
+	digestCache map[string]v1.Hash
+}
+
+// NewProvisioner constructs a Provisioner with the given configuration.
+// Uses the production craneFetcher for registry pulls.
+func NewProvisioner(cfg ProvisionerConfig) (*Provisioner, error) {
+	return newProvisionerWithFetcher(cfg, NewCraneFetcher())
+}
+
+// newProvisionerWithFetcher is the test-visible constructor that
+// allows injecting a custom ImageFetcher.
+func newProvisionerWithFetcher(cfg ProvisionerConfig, fetcher ImageFetcher) (*Provisioner, error) {
+	cfg = cfg.withDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	store := NewStore(cfg.RootfsCacheDir)
+	if err := store.Init(); err != nil {
+		return nil, err
+	}
+	return &Provisioner{
+		cfg:         cfg,
+		store:       store,
+		fetcher:     fetcher,
+		digestCache: make(map[string]v1.Hash),
+	}, nil
+}
+
+// Store returns the underlying cache store (for callers that need
+// to enumerate cache entries or build paths from digests).
+func (p *Provisioner) Store() *Store { return p.store }
+
+// Provision resolves ref to a manifest digest, builds the ext4 image
+// if not already cached, and returns the absolute path to the ext4
+// file. Safe for concurrent callers.
+func (p *Provisioner) Provision(ctx context.Context, ref string) (string, error) {
+	if strings.TrimSpace(ref) == "" {
+		return "", &InvalidProvisionerConfigError{Field: "ref", Message: "must not be empty"}
+	}
+	parsed, err := ParseReference(ref)
+	if err != nil {
+		return "", err
+	}
+
+	// Fast path: if we already resolved this canonical ref to a digest
+	// and the ext4 file is on disk, skip the network fetch entirely.
+	p.digestMu.RLock()
+	cached, ok := p.digestCache[parsed.Canonical]
+	p.digestMu.RUnlock()
+	if ok && p.store.Exists(cached) {
+		return p.store.PathFor(cached), nil
+	}
+
+	platform, perr := parsePlatform(p.cfg.DefaultPlatform)
+	if perr != nil {
+		return "", perr
+	}
+
+	img, err := p.fetcher.Fetch(ctx, parsed.Canonical, platform)
+	if err != nil {
+		return "", err
+	}
+	digest, err := img.Digest()
+	if err != nil {
+		return "", fmt.Errorf("firecracker: image: digest: %w", err)
+	}
+
+	// Record the ref -> digest mapping for future fast-path lookups.
+	p.digestMu.Lock()
+	p.digestCache[parsed.Canonical] = digest
+	p.digestMu.Unlock()
+
+	// Cache hit short-circuit (another goroutine may have built it).
+	if p.store.Exists(digest) {
+		return p.store.PathFor(digest), nil
+	}
+
+	// Miss: stream crane.Export -> tar2ext4 -> atomic write via Store.
+	if err := p.buildAndStore(ctx, img, digest); err != nil {
+		return "", err
+	}
+	return p.store.PathFor(digest), nil
+}
+
+func (p *Provisioner) buildAndStore(_ context.Context, img v1.Image, digest v1.Hash) error {
+	// Use a temp file (not in-memory) because tar2ext4 requires
+	// io.ReadWriteSeeker and ext4 images can exceed memory budget.
+	scratch, err := os.CreateTemp(p.cfg.RootfsCacheDir, digest.Hex+".ext4.scratch-*")
+	if err != nil {
+		return &CacheError{Op: "scratch", Cause: err}
+	}
+	scratchPath := scratch.Name()
+	defer func() { _ = scratch.Close(); _ = os.Remove(scratchPath) }()
+
+	pr, pw := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		// crane.Export flattens image layers into a single tar stream.
+		exportErr := crane.Export(img, pw)
+		_ = pw.CloseWithError(exportErr)
+		errCh <- exportErr
+	}()
+
+	convErr := tar2ext4.ConvertTarToExt4(pr, scratch,
+		tar2ext4.ConvertWhiteout,
+		tar2ext4.MaximumDiskSize(p.cfg.MaxImageSize),
+	)
+	if convErr != nil {
+		return &Ext4ConvertError{Cause: convErr}
+	}
+	if exportErr := <-errCh; exportErr != nil {
+		return &ImagePullError{Ref: digest.String(), Cause: exportErr}
+	}
+	if err := scratch.Sync(); err != nil {
+		return &CacheError{Op: "sync", Cause: err}
+	}
+	if _, err := scratch.Seek(0, io.SeekStart); err != nil {
+		return &CacheError{Op: "seek", Cause: err}
+	}
+
+	return p.store.AtomicWrite(digest, scratch)
+}
+
+// parsePlatform parses "linux/amd64" into a *v1.Platform.
+func parsePlatform(s string) (*v1.Platform, error) {
+	parts := strings.SplitN(s, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, &InvalidProvisionerConfigError{
+			Field:   "DefaultPlatform",
+			Message: fmt.Sprintf("must be 'os/arch', got %q", s),
+		}
+	}
+	return &v1.Platform{OS: parts[0], Architecture: parts[1]}, nil
 }
