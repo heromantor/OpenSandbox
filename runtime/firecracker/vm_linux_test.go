@@ -134,6 +134,118 @@ func TestToFirecrackerConfig_VsockDevice(t *testing.T) {
 	}
 }
 
+// TestToFirecrackerConfig_NilNetworkConfig verifies backward compatibility:
+// when NetworkConfig is nil, cfg.NetworkInterfaces remains nil.
+func TestToFirecrackerConfig_NilNetworkConfig(t *testing.T) {
+	cfg := VMConfig{
+		ID:              "test-vm",
+		VCPUs:           1,
+		MemoryMiB:       256,
+		KernelImagePath: "/tmp/kernel",
+		RootfsPath:      "/tmp/rootfs.ext4",
+		NetworkConfig:   nil,
+	}.withDefaults()
+
+	sdkCfg, err := cfg.toFirecrackerConfig()
+	if err != nil {
+		t.Fatalf("toFirecrackerConfig: %v", err)
+	}
+	if sdkCfg.NetworkInterfaces != nil {
+		t.Fatalf("expected nil NetworkInterfaces when NetworkConfig is nil, got %v", sdkCfg.NetworkInterfaces)
+	}
+}
+
+// TestToFirecrackerConfig_WithNetworkConfig verifies that a valid NetworkConfig
+// produces cfg.NetworkInterfaces with correct StaticConfiguration fields.
+func TestToFirecrackerConfig_WithNetworkConfig(t *testing.T) {
+	cfg := VMConfig{
+		ID:              "net-test-vm",
+		VCPUs:           1,
+		MemoryMiB:       256,
+		KernelImagePath: "/tmp/kernel",
+		RootfsPath:      "/tmp/rootfs.ext4",
+		NetworkConfig: &NetworkConfig{
+			SubnetIndex:   0,
+			HostInterface: "eth0",
+		},
+	}.withDefaults()
+
+	sdkCfg, err := cfg.toFirecrackerConfig()
+	if err != nil {
+		t.Fatalf("toFirecrackerConfig: %v", err)
+	}
+	if len(sdkCfg.NetworkInterfaces) == 0 {
+		t.Fatal("expected non-empty NetworkInterfaces")
+	}
+
+	ni := sdkCfg.NetworkInterfaces[0]
+	if ni.StaticConfiguration == nil {
+		t.Fatal("expected non-nil StaticConfiguration")
+	}
+	if ni.StaticConfiguration.HostDevName == "" {
+		t.Error("expected non-empty HostDevName")
+	}
+	if ni.StaticConfiguration.MacAddress == "" {
+		t.Error("expected non-empty MacAddress")
+	}
+	if ni.StaticConfiguration.IPConfiguration == nil {
+		t.Fatal("expected non-nil IPConfiguration")
+	}
+
+	ipCfg := ni.StaticConfiguration.IPConfiguration
+	// Subnet index 0: GuestIP = 172.16.0.2, Gateway = 172.16.0.1
+	if got := ipCfg.IPAddr.IP.String(); got != "172.16.0.2" {
+		t.Errorf("expected GuestIP 172.16.0.2, got %s", got)
+	}
+	if got := ipCfg.Gateway.String(); got != "172.16.0.1" {
+		t.Errorf("expected Gateway 172.16.0.1, got %s", got)
+	}
+
+	// Default nameservers should be used when NetworkConfig.Nameservers is nil.
+	if len(ipCfg.Nameservers) != 2 {
+		t.Fatalf("expected 2 default nameservers, got %d", len(ipCfg.Nameservers))
+	}
+	if ipCfg.Nameservers[0] != "8.8.8.8" {
+		t.Errorf("expected first nameserver 8.8.8.8, got %s", ipCfg.Nameservers[0])
+	}
+}
+
+// TestToFirecrackerConfig_NetworkConfigCustomNameservers verifies that custom
+// nameservers from NetworkConfig are passed through to IPConfiguration.
+func TestToFirecrackerConfig_NetworkConfigCustomNameservers(t *testing.T) {
+	cfg := VMConfig{
+		ID:              "dns-test-vm",
+		VCPUs:           1,
+		MemoryMiB:       256,
+		KernelImagePath: "/tmp/kernel",
+		RootfsPath:      "/tmp/rootfs.ext4",
+		NetworkConfig: &NetworkConfig{
+			SubnetIndex:   1,
+			HostInterface: "eth0",
+			Nameservers:   []string{"1.1.1.1", "9.9.9.9"},
+		},
+	}.withDefaults()
+
+	sdkCfg, err := cfg.toFirecrackerConfig()
+	if err != nil {
+		t.Fatalf("toFirecrackerConfig: %v", err)
+	}
+	if len(sdkCfg.NetworkInterfaces) == 0 {
+		t.Fatal("expected non-empty NetworkInterfaces")
+	}
+
+	ipCfg := sdkCfg.NetworkInterfaces[0].StaticConfiguration.IPConfiguration
+	if len(ipCfg.Nameservers) != 2 {
+		t.Fatalf("expected 2 custom nameservers, got %d", len(ipCfg.Nameservers))
+	}
+	if ipCfg.Nameservers[0] != "1.1.1.1" {
+		t.Errorf("expected first nameserver 1.1.1.1, got %s", ipCfg.Nameservers[0])
+	}
+	if ipCfg.Nameservers[1] != "9.9.9.9" {
+		t.Errorf("expected second nameserver 9.9.9.9, got %s", ipCfg.Nameservers[1])
+	}
+}
+
 // writeTemp creates a temporary file with the given name and content, returning its path.
 func writeTemp(t *testing.T, name, content string) string {
 	t.Helper()

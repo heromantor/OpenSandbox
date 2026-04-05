@@ -248,6 +248,46 @@ func TestVMConfigDefaults_PreservesExplicitValues(t *testing.T) {
 	}
 }
 
+func TestVMConfigValidate_NilNetworkConfig(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.NetworkConfig = nil
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("expected nil error for nil NetworkConfig, got: %v", err)
+	}
+}
+
+func TestVMConfigValidate_InvalidNetworkConfig(t *testing.T) {
+	cfg := validConfig(t)
+	cfg.NetworkConfig = &NetworkConfig{
+		SubnetIndex:   0,
+		HostInterface: "", // invalid: empty
+		Nameservers:   []string{"8.8.8.8"},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected error for invalid NetworkConfig, got nil")
+	}
+	if !strings.Contains(err.Error(), "NetworkConfig") {
+		t.Errorf("error should mention NetworkConfig, got: %v", err)
+	}
+}
+
+func TestManagerConfig_HostInterface_DefaultEmpty(t *testing.T) {
+	cfg := ManagerConfig{}
+	filled := cfg.withDefaults()
+	if filled.HostInterface != "" {
+		t.Errorf("expected empty HostInterface by default, got %q", filled.HostInterface)
+	}
+}
+
+func TestManagerConfig_EgressProxyAddr_DefaultEmpty(t *testing.T) {
+	cfg := ManagerConfig{}
+	filled := cfg.withDefaults()
+	if filled.EgressProxyAddr != "" {
+		t.Errorf("expected empty EgressProxyAddr by default, got %q", filled.EgressProxyAddr)
+	}
+}
+
 func TestVMState_Constants(t *testing.T) {
 	// Verify state constants have expected string representations.
 	if StateCreated != "Created" {
