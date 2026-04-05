@@ -64,5 +64,25 @@ func (c *VMConfig) toFirecrackerConfig() (sdk.Config, error) {
 		}}
 	}
 
+	// Configure network interface if NetworkConfig is set.
+	if c.NetworkConfig != nil {
+		alloc, err := AllocateSubnet(c.NetworkConfig.SubnetIndex)
+		if err != nil {
+			return sdk.Config{}, fmt.Errorf("firecracker: allocate subnet: %w", err)
+		}
+		mac, err := GenerateMAC()
+		if err != nil {
+			return sdk.Config{}, fmt.Errorf("firecracker: generate mac: %w", err)
+		}
+		tapName := TAPDeviceName(c.ID)
+		nameservers := c.NetworkConfig.Nameservers
+		if len(nameservers) == 0 {
+			nameservers = DefaultNameservers
+		}
+		cfg.NetworkInterfaces = BuildSDKNetworkInterfaces(
+			tapName, mac, alloc.GuestIP, alloc.GatewayIP, alloc.Subnet, nameservers,
+		)
+	}
+
 	return cfg, nil
 }

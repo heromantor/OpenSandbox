@@ -61,6 +61,10 @@ type VMConfig struct {
 	// Must be >= 3 (CID 0=hypervisor, 1=reserved, 2=host). When 0, the
 	// Manager auto-assigns a CID from its CIDAllocator.
 	VsockCID uint32
+	// NetworkConfig configures the VM's network interface. When non-nil, the
+	// Manager provisions a TAP device, iptables NAT rules, and guest-side IP
+	// configuration. When nil, the VM has no network connectivity.
+	NetworkConfig *NetworkConfig
 	// JailerEnabled runs the VM inside Jailer (recommended for production).
 	JailerEnabled bool
 	// Jailer holds the jailer configuration (used when JailerEnabled=true).
@@ -125,6 +129,11 @@ func (c *VMConfig) Validate() error {
 			}
 		}
 	}
+	if c.NetworkConfig != nil {
+		if err := c.NetworkConfig.Validate(); err != nil {
+			return fmt.Errorf("firecracker: invalid config: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -184,6 +193,8 @@ type VM struct {
 	VsockCID uint32
 	// VsockUDSPath is the host-side Unix domain socket path for vsock.
 	VsockUDSPath string
+	// NetworkConfig is the resolved network configuration for this VM (nil if no network).
+	NetworkConfig *NetworkConfig
 
 	// mu protects mutable VM fields during concurrent access.
 	mu sync.Mutex

@@ -10,6 +10,14 @@ type ManagerConfig struct {
 	DefaultMemoryMiB int64
 	// LogLevel is the default log level (default "Error").
 	LogLevel string
+	// HostInterface is the host's outbound network interface for iptables NAT rules.
+	// If empty, auto-detected via default route at VM creation time (Linux only).
+	HostInterface string
+	// EgressProxyAddr is the IP:port of the OpenSandbox egress proxy DNS listener.
+	// When set, this address is prepended to the VM's DNS nameservers so that
+	// guest DNS queries are intercepted for FQDN-based egress policy enforcement.
+	// Example: "172.16.0.1:53" (the host TAP IP running the proxy).
+	EgressProxyAddr string
 }
 
 // withDefaults returns a copy of ManagerConfig with zero-value fields filled
