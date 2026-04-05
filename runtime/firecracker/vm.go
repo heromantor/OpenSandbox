@@ -6,6 +6,8 @@ package firecracker
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sync"
 
@@ -123,6 +125,16 @@ func (c VMConfig) withDefaults() VMConfig {
 		c.JailerBin = "/usr/bin/jailer"
 	}
 	return c
+}
+
+// socketPath returns the API socket path for this VM configuration.
+// When Jailer is enabled, the socket path is relative inside the chroot.
+// When Jailer is disabled, the socket path is an absolute temp path.
+func (c *VMConfig) socketPath() string {
+	if c.JailerEnabled {
+		return socketPathInChroot()
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("firecracker-%s.socket", c.ID))
 }
 
 // VM represents a Firecracker microVM instance with its current state and

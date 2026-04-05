@@ -140,3 +140,4 @@ func resolveJailerConfig(vmID string, opts JailerOpts, firecrackerBin string) (*
 		numaNode:      opts.NumaNode,
 	}, nil
 }
+

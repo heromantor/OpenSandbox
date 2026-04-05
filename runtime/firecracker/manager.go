@@ -1,11 +1,5 @@
 package firecracker
 
-import (
-	"context"
-	"errors"
-	"sync"
-)
-
 // ManagerConfig holds configuration for the VM Manager.
 type ManagerConfig struct {
 	// ChrootBaseDir is the base directory for jailer chroots (default "/srv/jailer").
@@ -34,56 +28,4 @@ func (c ManagerConfig) withDefaults() ManagerConfig {
 		c.LogLevel = "Error"
 	}
 	return c
-}
-
-// Manager implements VMManager, managing the lifecycle of Firecracker microVMs.
-// It maintains an in-memory registry of VMs and coordinates creation, startup,
-// shutdown, and destruction operations.
-type Manager struct {
-	config ManagerConfig
-	vms    map[string]*VM
-	mu     sync.RWMutex
-}
-
-// Compile-time interface check: Manager must implement VMManager.
-var _ VMManager = (*Manager)(nil)
-
-// NewManager creates a new Manager with the given configuration. Zero-value
-// config fields are filled with defaults.
-func NewManager(cfg ManagerConfig) *Manager {
-	cfg = cfg.withDefaults()
-	return &Manager{
-		config: cfg,
-		vms:    make(map[string]*VM),
-	}
-}
-
-// Create creates a new VM with the given configuration.
-// This is a stub implementation that will be completed in Plan 02.
-func (m *Manager) Create(ctx context.Context, cfg VMConfig) (*VM, error) {
-	return nil, errors.New("not implemented")
-}
-
-// Start starts a previously created VM.
-// This is a stub implementation that will be completed in Plan 02.
-func (m *Manager) Start(ctx context.Context, vmID string) error {
-	return errors.New("not implemented")
-}
-
-// Stop gracefully stops a running VM.
-// This is a stub implementation that will be completed in Plan 02.
-func (m *Manager) Stop(ctx context.Context, vmID string) error {
-	return errors.New("not implemented")
-}
-
-// Destroy destroys a VM and cleans up all associated resources.
-// This is a stub implementation that will be completed in Plan 02.
-func (m *Manager) Destroy(ctx context.Context, vmID string) error {
-	return errors.New("not implemented")
-}
-
-// Get retrieves the current state of a VM by ID.
-// This is a stub implementation that will be completed in Plan 02.
-func (m *Manager) Get(ctx context.Context, vmID string) (*VM, error) {
-	return nil, errors.New("not implemented")
 }
