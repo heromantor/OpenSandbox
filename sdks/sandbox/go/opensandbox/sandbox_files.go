@@ -47,11 +47,11 @@ func (s *Sandbox) SetPermissions(ctx context.Context, req PermissionsRequest) er
 }
 
 // UploadFile uploads a local file to the sandbox.
-func (s *Sandbox) UploadFile(ctx context.Context, localPath, remotePath string) error {
+func (s *Sandbox) UploadFile(ctx context.Context, localPath, remotePath string, fileData io.Reader) error {
 	if s.execd == nil {
 		return fmt.Errorf("opensandbox: execd client not initialized")
 	}
-	return s.execd.UploadFile(ctx, localPath, remotePath)
+	return s.execd.UploadFile(ctx, localPath, remotePath, fileData)
 }
 
 // DownloadFile downloads a file from the sandbox.

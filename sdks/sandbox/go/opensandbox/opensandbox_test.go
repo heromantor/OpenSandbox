@@ -561,7 +561,7 @@ func TestUploadFile(t *testing.T) {
 	}
 	defer os.Remove(tmpFile.Name())
 	tmpFile.WriteString("file contents here")
-	tmpFile.Close()
+	tmpFile.Seek(0, io.SeekStart)
 
 	_, client := newExecdServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -575,13 +575,21 @@ func TestUploadFile(t *testing.T) {
 		}
 
 		// Verify metadata part exists.
-		r.ParseMultipartForm(1 << 20)
-		metaStr := r.FormValue("metadata")
-		if metaStr == "" {
+		//r.ParseMultipartForm(1 << 20)
+		metaFile, _, err := r.FormFile("metadata")
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err.Error())
+		}
+		metaStr, err := io.ReadAll(metaFile)
+		if err != nil {
+			t.Fatalf("unexpected error: %s", err.Error())
+		}
+		if len(metaStr) == 0 {
 			t.Error("expected metadata form field")
 		}
+
 		var meta FileMetadata
-		json.Unmarshal([]byte(metaStr), &meta)
+		json.Unmarshal(metaStr, &meta)
 		if meta.Path != "/sandbox/upload.txt" {
 			t.Errorf("metadata path = %q, want /sandbox/upload.txt", meta.Path)
 		}
@@ -601,7 +609,7 @@ func TestUploadFile(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	err = client.UploadFile(context.Background(), tmpFile.Name(), "/sandbox/upload.txt")
+	err = client.UploadFile(context.Background(), tmpFile.Name(), "/sandbox/upload.txt", tmpFile)
 	if err != nil {
 		t.Fatalf("UploadFile: %v", err)
 	}
@@ -803,7 +811,10 @@ func TestSandboxManager_ListFilter(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	want := ListSandboxesResponse{
 		Items: []SandboxInfo{
-			{ID: "sbx-a", Status: SandboxStatus{State: StateRunning}, Metadata: map[string]string{"env": "prod"}, CreatedAt: now},
+			{ID: "sbx-a",
+				Status:    SandboxStatus{State: StateRunning},
+				Metadata:  map[string]string{"env": "prod"},
+				CreatedAt: now},
 		},
 		Pagination: PaginationInfo{Page: 1, PageSize: 10, TotalItems: 1, TotalPages: 1, HasNextPage: false},
 	}
@@ -2164,8 +2175,8 @@ func TestCreateSandbox_WithNetworkPolicy(t *testing.T) {
 	})
 
 	_, err := client.CreateSandbox(context.Background(), CreateSandboxRequest{
-		Image:      ImageSpec{URI: "python:3.12"},
-		Entrypoint: []string{"/bin/sh"},
+		Image:          ImageSpec{URI: "python:3.12"},
+		Entrypoint:     []string{"/bin/sh"},
 		ResourceLimits: ResourceLimits{"cpu": "500m"},
 		NetworkPolicy: &NetworkPolicy{
 			DefaultAction: "deny",

@@ -1,14 +1,12 @@
 package opensandbox
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/textproto"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -245,18 +243,7 @@ func (e *ExecdClient) ReplaceInFiles(ctx context.Context, req ReplaceRequest) er
 	return e.client.doRequest(ctx, http.MethodPost, "/files/replace", req, nil)
 }
 
-// UploadFile uploads a local file to the sandbox at the specified remote path.
-// The file is sent as a multipart form with metadata and file content parts.
-func (e *ExecdClient) UploadFile(ctx context.Context, localPath, remotePath string) error {
-	f, err := os.Open(localPath)
-	if err != nil {
-		return fmt.Errorf("opensandbox: open file: %w", err)
-	}
-	defer f.Close()
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
+func (e *ExecdClient) uploadFileParts(writer *multipart.Writer, localPath, remotePath string, r io.Reader) error {
 	// Write metadata part.
 	meta := FileMetadata{Path: remotePath}
 	metaJSON, err := json.Marshal(meta)
@@ -264,10 +251,7 @@ func (e *ExecdClient) UploadFile(ctx context.Context, localPath, remotePath stri
 		return fmt.Errorf("opensandbox: marshal metadata: %w", err)
 	}
 
-	metaHeader := make(textproto.MIMEHeader)
-	metaHeader.Set("Content-Disposition", `form-data; name="metadata"`)
-	metaHeader.Set("Content-Type", "application/json")
-	metaPart, err := writer.CreatePart(metaHeader)
+	metaPart, err := writer.CreateFormFile("metadata", "metadata")
 	if err != nil {
 		return fmt.Errorf("opensandbox: create metadata part: %w", err)
 	}
@@ -280,7 +264,7 @@ func (e *ExecdClient) UploadFile(ctx context.Context, localPath, remotePath stri
 	if err != nil {
 		return fmt.Errorf("opensandbox: create file part: %w", err)
 	}
-	if _, err := io.Copy(filePart, f); err != nil {
+	if _, err := io.Copy(filePart, r); err != nil {
 		return fmt.Errorf("opensandbox: write file: %w", err)
 	}
 
@@ -288,7 +272,36 @@ func (e *ExecdClient) UploadFile(ctx context.Context, localPath, remotePath stri
 		return fmt.Errorf("opensandbox: close multipart: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.client.baseURL+"/files/upload", &body)
+	return nil
+}
+
+// UploadFile uploads a local file to the sandbox at the specified remote path.
+// The file is sent as a multipart form with metadata and file content parts.
+func (e *ExecdClient) UploadFile(ctx context.Context, localPath, remotePath string, fileData io.Reader) (err error) {
+	pipeReader, pipeWriter := io.Pipe()
+
+	writer := multipart.NewWriter(pipeWriter)
+	var lastErr error
+	go func() {
+		defer func() {
+			pipeWriter.Close()
+		}()
+
+		if err := e.uploadFileParts(writer, localPath, remotePath, fileData); err != nil {
+			lastErr = err
+		}
+	}()
+	defer func() {
+		if lastErr != nil {
+			if err != nil {
+				err = fmt.Errorf("%s: %w", lastErr.Error(), err)
+			} else {
+				err = lastErr
+			}
+		}
+	}()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.client.baseURL+"/files/upload", pipeReader)
 	if err != nil {
 		return fmt.Errorf("opensandbox: create request: %w", err)
 	}
@@ -301,11 +314,15 @@ func (e *ExecdClient) UploadFile(ctx context.Context, localPath, remotePath stri
 	if err != nil {
 		return fmt.Errorf("opensandbox: do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= 400 {
 		return handleError(resp)
 	}
+
 	return nil
 }
 
