@@ -17,13 +17,14 @@ const defaultTimeout = 0
 
 // Client is the base HTTP client shared by LifecycleClient and EgressClient.
 type Client struct {
-	baseURL    string
-	apiKey     string
-	authHeader string
-	httpClient *http.Client
-	timeout    *time.Duration // stored separately, applied after all options
-	headers    map[string]string
-	retry      *RetryConfig
+	baseURL       string
+	apiKey        string
+	authHeader    string
+	httpClient    *http.Client
+	sseHTTPClient *http.Client
+	timeout       *time.Duration // stored separately, applied after all options
+	headers       map[string]string
+	retry         *RetryConfig
 }
 
 // Option configures a Client.
@@ -79,6 +80,12 @@ func NewClient(baseURL, apiKey, authHeader string, opts ...Option) *Client {
 	for _, opt := range opts {
 		opt(c)
 	}
+
+	// Для sse нам обязательно нужен клиент без таймаута
+	sseClient := *c.httpClient
+	sseClient.Timeout = defaultTimeout
+	c.sseHTTPClient = &sseClient
+
 	// Apply deferred timeout after all options so it works regardless of
 	// WithHTTPClient ordering and guards against a nil httpClient.
 	if c.timeout != nil {
@@ -181,7 +188,7 @@ func (c *Client) doStreamRequest(ctx context.Context, method, path string, body 
 		}
 		req.Header.Set("Accept", "text/event-stream")
 
-		r, err := c.httpClient.Do(req)
+		r, err := c.sseHTTPClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("opensandbox: do request: %w", err)
 		}
