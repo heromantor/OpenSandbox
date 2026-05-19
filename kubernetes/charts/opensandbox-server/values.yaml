@@ -41,6 +41,8 @@ server:
 
   tolerations: []
   affinity: {}
+  volumeMounts: []
+  volumes: []
 
   # Gateway (components/ingress): when enabled, writes config [ingress] and deploys the gateway
   gateway:
