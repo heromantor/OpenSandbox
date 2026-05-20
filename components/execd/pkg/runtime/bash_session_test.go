@@ -525,7 +525,11 @@ func TestBashSession_CloseKillsRunningProcess(t *testing.T) {
 	})
 
 	// Give the child process time to start.
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return session.getCurrentPid() != 0
+	}, 2*time.Second, 50*time.Millisecond)
+
+	pid := session.getCurrentPid()
 
 	// Close should kill the process group; run() should return soon (it may return nil
 	// because the code path treats non-zero exit as success after calling OnExecuteError).
@@ -537,6 +541,51 @@ func TestBashSession_CloseKillsRunningProcess(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		require.Fail(t, "run did not return within 3s after close (process was not killed)")
 	}
+
+	// Verify child processes in the group are also gone.
+	if pid != 0 {
+		assertNoOrphanChildren(t, pid)
+	}
+}
+
+// TestBashSession_CloseKillsProcessGroupWithChildren verifies that close()
+// kills the entire process group, including child processes spawned by the command.
+func TestBashSession_CloseKillsProcessGroupWithChildren(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not found in PATH")
+	}
+
+	session := newBashSession("")
+	require.NoError(t, session.start())
+
+	runDone := make(chan error, 1)
+	req := &ExecuteCodeRequest{
+		Code:    "sleep 60 & sleep 60 & wait",
+		Timeout: 60 * time.Second,
+		Hooks:   ExecuteResultHook{},
+	}
+	safego.Go(func() {
+		runDone <- session.run(context.Background(), req)
+	})
+
+	// Give the command time to start and spawn children.
+	require.Eventually(t, func() bool {
+		return session.getCurrentPid() != 0
+	}, 2*time.Second, 50*time.Millisecond)
+
+	pid := session.getCurrentPid()
+	require.NotZero(t, pid, "expected session to have a running process")
+
+	require.NoError(t, session.close())
+
+	select {
+	case <-runDone:
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "run did not return within 5s after close (process group was not killed)")
+	}
+
+	// Verify child processes in the group are also gone.
+	assertNoOrphanChildren(t, pid)
 }
 
 // TestBashSession_DeleteBashSessionKillsRunningProcess verifies that DeleteBashSession
@@ -596,5 +645,83 @@ func TestBashSession_CloseWithNoActiveRun(t *testing.T) {
 		// close() returned
 	case <-time.After(2 * time.Second):
 		require.Fail(t, "close() did not return within 2s when no run was active")
+	}
+}
+
+// TestBashSession_TimeoutKillsProcessGroup verifies that a command exceeding
+// its timeout gets the entire process group killed, not just the leader.
+func TestBashSession_TimeoutKillsProcessGroup(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not found in PATH")
+	}
+
+	session := newBashSession("")
+	require.NoError(t, session.start())
+	t.Cleanup(func() { _ = session.close() })
+
+	runDone := make(chan error, 1)
+	req := &ExecuteCodeRequest{
+		Code:    "sleep 60 & sleep 60 & wait",
+		Timeout: 1 * time.Second,
+		Hooks:   ExecuteResultHook{},
+	}
+	safego.Go(func() {
+		runDone <- session.run(context.Background(), req)
+	})
+
+	select {
+	case <-runDone:
+		// run() returned because the timeout killed the process group
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "run did not return within 10s after timeout (process group was not killed)")
+	}
+
+	// Verify child processes in the group are also gone.
+	if pid := session.getCurrentPid(); pid != 0 {
+		assertNoOrphanChildren(t, pid)
+	}
+}
+
+// TestBashSession_ContextCancelKillsProcessGroup verifies that cancelling the
+// parent context kills the entire process group.
+func TestBashSession_ContextCancelKillsProcessGroup(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not found in PATH")
+	}
+
+	session := newBashSession("")
+	require.NoError(t, session.start())
+	t.Cleanup(func() { _ = session.close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	runDone := make(chan error, 1)
+	req := &ExecuteCodeRequest{
+		Code:    "sleep 60 & sleep 60 & wait",
+		Timeout: 60 * time.Second,
+		Hooks:   ExecuteResultHook{},
+	}
+	safego.Go(func() {
+		runDone <- session.run(ctx, req)
+	})
+
+	// Give the command time to start.
+	require.Eventually(t, func() bool {
+		return session.getCurrentPid() != 0
+	}, 2*time.Second, 50*time.Millisecond)
+
+	// Cancel the context — should kill the whole process group.
+	cancel()
+
+	select {
+	case <-runDone:
+		// run() returned because context cancel killed the process group
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "run did not return within 5s after context cancel (process group was not killed)")
+	}
+
+	// Verify child processes in the group are also gone.
+	if pid := session.getCurrentPid(); pid != 0 {
+		assertNoOrphanChildren(t, pid)
 	}
 }

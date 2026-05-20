@@ -128,6 +128,12 @@ func (s *ptySession) IsRunning() bool {
 	return s.pid != 0
 }
 
+func (s *ptySession) getPid() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pid
+}
+
 // IsPTY returns true when the session was started in PTY mode.
 func (s *ptySession) IsPTY() bool {
 	return s.isPTY
@@ -520,7 +526,7 @@ func (s *ptySession) close() {
 	s.mu.Unlock()
 
 	if pid != 0 {
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		killProcessGroupImmediate(pid)
 	}
 	if ptmx != nil {
 		_ = ptmx.Close()

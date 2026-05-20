@@ -16,4 +16,7 @@ package runtime
 
 import "errors"
 
-var ErrContextNotFound = errors.New("context not found")
+var (
+	ErrContextNotFound = errors.New("context not found")
+	ErrNoSuchSession  = errors.New("no such session")
+)

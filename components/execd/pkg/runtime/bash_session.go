@@ -155,6 +155,12 @@ func (s *bashSession) untrackCurrentProcess() {
 	s.currentProcessPid = 0
 }
 
+func (s *bashSession) getCurrentPid() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.currentProcessPid
+}
+
 //nolint:gocognit
 func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) error {
 	s.mu.Lock()
@@ -205,7 +211,7 @@ func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) erro
 		return fmt.Errorf("close script file: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", scriptPath)
+	cmd := exec.Command("bash", "--noprofile", "--norc", scriptPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Do not pass envSnapshot via cmd.Env to avoid "argument list too long" when session env is large.
 	// Child inherits parent env (nil => default in Go). The script file already has "export K=V" for
@@ -222,6 +228,10 @@ func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) erro
 	}
 	defer s.untrackCurrentProcess()
 	s.trackCurrentProcess(cmd.Process.Pid)
+
+	// Kill the whole process group on context cancellation (timeout, client disconnect).
+	cmdDone := make(chan struct{})
+	watchCtxAndKillGroup(ctx, cmd, cmdDone)
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -259,6 +269,7 @@ func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) erro
 
 	scanErr := scanner.Err()
 	waitErr := cmd.Wait()
+	close(cmdDone)
 
 	if scanErr != nil {
 		log.Error("read stdout failed: %v (command: %q)", scanErr, log.SanitizeCommand(request.Code))
@@ -467,9 +478,7 @@ func (s *bashSession) close() error {
 	s.cwd = ""
 
 	if pid != 0 {
-		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-			log.Warning("kill session process group %d: %v (process may have already exited)", pid, err)
-		}
+		killProcessGroupImmediate(pid)
 	}
 	return nil
 }
