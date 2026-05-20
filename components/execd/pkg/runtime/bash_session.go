@@ -32,6 +32,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/alibaba/opensandbox/internal/safego"
+
 	"github.com/alibaba/opensandbox/execd/pkg/jupyter/execute"
 	"github.com/alibaba/opensandbox/execd/pkg/log"
 	"github.com/alibaba/opensandbox/execd/pkg/util/pathutil"
@@ -222,6 +224,17 @@ func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) erro
 	}
 	defer s.untrackCurrentProcess()
 	s.trackCurrentProcess(cmd.Process.Pid)
+
+	// Kill the whole process group on context cancellation (timeout, client disconnect).
+	// exec.CommandContext only kills the process leader, not its children.
+	safego.Go(func() {
+		<-ctx.Done()
+		if cmd.Process != nil {
+			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && !isProcessGone(err) {
+				log.Warning("kill bash session process group %d: %v", cmd.Process.Pid, err)
+			}
+		}
+	})
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)

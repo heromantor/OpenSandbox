@@ -171,6 +171,13 @@ func (c *Controller) runCommand(ctx context.Context, request *ExecuteCodeRequest
 		for {
 			select {
 			case <-ctx.Done():
+				// Kill the whole process group on context cancellation (timeout, client disconnect).
+				// exec.CommandContext only kills the process leader, not its children.
+				if cmd.Process != nil {
+					if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
+						log.Warning("kill command process group %d: %v", cmd.Process.Pid, err)
+					}
+				}
 				return
 			case sig := <-signals:
 				if sig == nil {

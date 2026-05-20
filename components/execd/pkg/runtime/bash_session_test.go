@@ -598,3 +598,69 @@ func TestBashSession_CloseWithNoActiveRun(t *testing.T) {
 		require.Fail(t, "close() did not return within 2s when no run was active")
 	}
 }
+
+// TestBashSession_TimeoutKillsProcessGroup verifies that a command exceeding
+// its timeout gets the entire process group killed, not just the leader.
+func TestBashSession_TimeoutKillsProcessGroup(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not found in PATH")
+	}
+
+	session := newBashSession("")
+	require.NoError(t, session.start())
+	t.Cleanup(func() { _ = session.close() })
+
+	runDone := make(chan error, 1)
+	req := &ExecuteCodeRequest{
+		Code:    "sleep 60 & sleep 60 & wait",
+		Timeout: 1 * time.Second,
+		Hooks:   ExecuteResultHook{},
+	}
+	safego.Go(func() {
+		runDone <- session.run(context.Background(), req)
+	})
+
+	select {
+	case <-runDone:
+		// run() returned because the timeout killed the process group
+	case <-time.After(10 * time.Second):
+		require.Fail(t, "run did not return within 10s after timeout (process group was not killed)")
+	}
+}
+
+// TestBashSession_ContextCancelKillsProcessGroup verifies that cancelling the
+// parent context kills the entire process group.
+func TestBashSession_ContextCancelKillsProcessGroup(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not found in PATH")
+	}
+
+	session := newBashSession("")
+	require.NoError(t, session.start())
+	t.Cleanup(func() { _ = session.close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	runDone := make(chan error, 1)
+	req := &ExecuteCodeRequest{
+		Code:    "sleep 60 & sleep 60 & wait",
+		Timeout: 60 * time.Second,
+		Hooks:   ExecuteResultHook{},
+	}
+	safego.Go(func() {
+		runDone <- session.run(ctx, req)
+	})
+
+	// Give the command time to start.
+	time.Sleep(200 * time.Millisecond)
+
+	// Cancel the context — should kill the whole process group.
+	cancel()
+
+	select {
+	case <-runDone:
+		// run() returned because context cancel killed the process group
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "run did not return within 5s after context cancel (process group was not killed)")
+	}
+}
