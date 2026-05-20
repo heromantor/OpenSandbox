@@ -25,8 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/alibaba/opensandbox/internal/safego"
-
 	"github.com/alibaba/opensandbox/execd/pkg/log"
 )
 
@@ -35,7 +33,7 @@ func (c *Controller) Interrupt(sessionID string) error {
 	switch {
 	case c.getJupyterKernel(sessionID) != nil:
 		kernel := c.getJupyterKernel(sessionID)
-		log.Warning("Interrupting Jupyter kernel %s", kernel.kernelID)
+		log.Info("Interrupting Jupyter kernel %s", kernel.kernelID)
 		return kernel.client.InterruptKernel(kernel.kernelID)
 	case c.getCommandKernel(sessionID) != nil:
 		kernel := c.getCommandKernel(sessionID)
@@ -68,50 +66,7 @@ func (c *Controller) killPid(pid int) error {
 
 // killProcessGroup sends SIGTERM followed by SIGKILL to the entire process group.
 func (c *Controller) killProcessGroup(pid int) error {
-	log.Warning("Attempting to terminate process group %d", pid)
-
-	// Send SIGTERM to the whole process group.
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
-		if isProcessGone(err) {
-			return nil
-		}
-
-		log.Warning("SIGTERM failed for process group %d: %v, trying SIGKILL", pid, err)
-	} else {
-		// Wait for the process leader to exit after SIGTERM.
-		// On Unix, FindProcess always succeeds; check existence via Signal(0).
-		process, err := os.FindProcess(pid)
-		switch {
-		case err != nil:
-			log.Warning("Process group %d did not terminate after SIGTERM, using SIGKILL: %v", pid, err)
-		default:
-			if waitForProcessExit(process, 3*time.Second) {
-				log.Info("Process group %d terminated gracefully", pid)
-				return nil
-			}
-		}
-	}
-
-	// Send SIGKILL to the whole process group.
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-		if isProcessGone(err) {
-			log.Info("Process group %d confirmed terminated", pid)
-			return nil
-		}
-
-		return fmt.Errorf("failed to kill process group %d: %w", pid, err)
-	}
-
-	// Verify the process leader has exited.
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("os.FindProcess for group %d returned unexpected error: %w", pid, err)
-	}
-	if ok := confirmProcessTerminated(process, "process group"); ok {
-		return nil
-	}
-
-	return fmt.Errorf("process group %d might still be running", pid)
+	return killProcessGroupGraceful(pid, 3*time.Second)
 }
 
 // killProcessOnly sends SIGTERM followed by SIGKILL to a single process.
@@ -120,21 +75,25 @@ func (c *Controller) killProcessOnly(pid int) error {
 	if err != nil {
 		return err
 	}
-	log.Warning("Attempting to terminate process %d", pid)
+	log.Info("Attempting to terminate process %d", pid)
 
 	if err := process.Signal(syscall.SIGTERM); err != nil {
 		if isProcessGone(err) {
 			return nil
 		}
 
-		log.Warning("SIGTERM failed for pid %d: %v, trying SIGKILL", pid, err)
+		log.Info("SIGTERM failed for pid %d: %v, trying SIGKILL", pid, err)
 	} else {
-		if waitForProcessExit(process, 3*time.Second) {
+		exited, waitErr := waitForProcessExit(process, 3*time.Second)
+		if waitErr != nil {
+			log.Warning("wait for process %d exit: %v", pid, waitErr)
+		}
+		if exited {
 			log.Info("Process %d terminated gracefully", pid)
 			return nil
 		}
 
-		log.Warning("Process %d did not terminate after SIGTERM, using SIGKILL", pid)
+		log.Info("Process %d did not terminate after SIGTERM, using SIGKILL", pid)
 	}
 
 	if err := process.Signal(syscall.SIGKILL); err != nil {
@@ -153,41 +112,122 @@ func (c *Controller) killProcessOnly(pid int) error {
 }
 
 // confirmProcessTerminated checks that a process has exited by sending
-// signal 0 in a loop. Returns true if the process is confirmed dead.
+// signal 0 in a loop. Returns true if the process is confirmed dead or
+// is a zombie (its parent hasn't called Wait yet).
 func confirmProcessTerminated(process *os.Process, label string) bool {
 	for range 3 {
-		if err := process.Signal(syscall.Signal(0)); err != nil {
-			if isProcessGone(err) {
-				log.Info("%s %d confirmed terminated", label, process.Pid)
-				return true
-			}
+		gone, _ := isProcessDeadOrZombie(process.Pid)
+		if gone {
+			log.Info("%s %d confirmed terminated", label, process.Pid)
+			return true
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 	return false
 }
 
+// isProcessDeadOrZombie checks whether a process is either dead or a zombie.
+// Signal(0) succeeds for zombies, so we also check /proc/<pid>/stat state.
+func isProcessDeadOrZombie(pid int) (bool, error) {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false, fmt.Errorf("find process %d: %w", pid, err)
+	}
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		if isProcessGone(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("signal process %d: %w", pid, err)
+	}
+	// Signal(0) succeeded — process exists. Check if it's a zombie.
+	return isZombie(pid)
+}
+
+// isZombie reads /proc/<pid>/stat and returns true if the process state is 'Z' (zombie).
+func isZombie(pid int) (bool, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false, fmt.Errorf("read /proc/%d/stat: %w", pid, err)
+	}
+	// Format: pid (comm) state ...
+	// Find the closing ')' to skip the comm field which may contain spaces and ')' itself.
+	closeParen := strings.LastIndex(string(data), ")")
+	if closeParen < 0 || closeParen+2 >= len(data) {
+		return false, fmt.Errorf("unexpected /proc/%d/stat format", pid)
+	}
+	state := data[closeParen+2]
+	return state == 'Z', nil
+}
+
 // isProcessGone returns true if the error indicates that the target process
-// has already exited ("no such process" or "already finished").
+// has already exited. Uses typed checks (ESRCH, ErrProcessDone) first,
+// with string matching as a fallback for wrapped errors.
 func isProcessGone(err error) bool {
+	if errors.Is(err, syscall.ESRCH) {
+		return true
+	}
+	if errors.Is(err, os.ErrProcessDone) {
+		return true
+	}
+	// Fallback for wrapped errors with non-standard formatting
 	msg := err.Error()
 	return strings.Contains(msg, "no such process") ||
 		strings.Contains(msg, "already finished")
 }
 
 // waitForProcessExit waits for a process to exit within the given timeout.
-// Returns true if the process exited cleanly (Wait returned nil error).
-func waitForProcessExit(process *os.Process, timeout time.Duration) bool {
-	done := make(chan error, 1)
-	safego.Go(func() {
-		_, err := process.Wait()
-		done <- err
-	})
-
-	select {
-	case err := <-done:
-		return err == nil
-	case <-time.After(timeout):
-		return false
+// Uses Signal(0) polling instead of process.Wait() to avoid conflicting
+// with cmd.Wait() callers. Returns true if the process exited within
+// the timeout (including killed-by-signal and zombie cases).
+func waitForProcessExit(process *os.Process, timeout time.Duration) (bool, error) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		gone, err := isProcessDeadOrZombie(process.Pid)
+		if err != nil {
+			return false, fmt.Errorf("check process %d liveness: %w", process.Pid, err)
+		}
+		if gone {
+			return true, nil
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
+	return false, nil
+}
+
+// killProcessGroupImmediate sends SIGKILL to the process group.
+// Expected errors (ESRCH, process already finished) are suppressed.
+func killProcessGroupImmediate(pid int) {
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !isProcessGone(err) {
+		log.Warning("kill process group %d: %v", pid, err)
+	}
+}
+
+// killProcessGroupGraceful sends SIGTERM to the group, waits for gracePeriod,
+// then sends SIGKILL. Returns nil if the group terminated.
+func killProcessGroupGraceful(pid int, gracePeriod time.Duration) error {
+	// SIGTERM to the group — bash forwards the signal to children and waits for them
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+		if isProcessGone(err) {
+			return nil
+		}
+		log.Info("SIGTERM failed for process group %d: %v, trying SIGKILL", pid, err)
+	} else {
+		// Wait for the group to terminate after SIGTERM
+		process, findErr := os.FindProcess(pid)
+		if findErr != nil {
+			return fmt.Errorf("find process %d: %w", pid, findErr)
+		}
+		exited, waitErr := waitForProcessExit(process, gracePeriod)
+		if waitErr != nil {
+			return fmt.Errorf("wait for process group %d exit: %w", pid, waitErr)
+		}
+		if exited {
+			log.Info("Process group %d terminated gracefully", pid)
+			return nil
+		}
+		log.Info("Process group %d did not terminate after SIGTERM, using SIGKILL", pid)
+	}
+	// SIGKILL to the group — guaranteed kill
+	killProcessGroupImmediate(pid)
+	return nil
 }

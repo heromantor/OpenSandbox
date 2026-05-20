@@ -254,6 +254,7 @@ func TestPTYSession_CloseTerminatesProcess(t *testing.T) {
 	s := newPTYSession(uuidString(), "")
 	require.NoError(t, s.StartPTY())
 
+	pid := s.pid
 	require.True(t, s.IsRunning())
 	s.close()
 
@@ -265,6 +266,52 @@ func TestPTYSession_CloseTerminatesProcess(t *testing.T) {
 			t.Fatal("process did not exit within 3s after close()")
 		}
 	}
+
+	// Verify no orphan children remain in the process group.
+	if pid != 0 {
+		assertNoOrphanChildren(t, pid)
+	}
+}
+
+// TestPTYSession_CloseKillsProcessGroupWithChildren verifies that close()
+// kills the entire process group including child processes spawned by the command.
+func TestPTYSession_CloseKillsProcessGroupWithChildren(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not found")
+	}
+
+	s := newPTYSession(uuidString(), "")
+	require.NoError(t, s.StartPipe())
+	t.Cleanup(func() { s.close() })
+
+	stdoutR, stderrR, detach := s.AttachOutput()
+	defer detach()
+	safego.Go(func() { _, _ = io.Copy(io.Discard, stdoutR) })
+	safego.Go(func() { _, _ = io.Copy(io.Discard, stderrR) })
+
+	// Spawn child processes in the background.
+	_, err := s.WriteStdin([]byte("sleep 60 & sleep 60 & wait\n"))
+	require.NoError(t, err)
+
+	// Give children time to start.
+	time.Sleep(500 * time.Millisecond)
+
+	pid := s.pid
+	require.NotZero(t, pid, "expected session to have a running process")
+
+	s.close()
+
+	done := s.Done()
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("process group did not exit within 5s after close()")
+		}
+	}
+
+	// Verify no orphan children remain in the process group.
+	assertNoOrphanChildren(t, pid)
 }
 
 func TestPTYSession_ExitCode(t *testing.T) {

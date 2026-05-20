@@ -520,7 +520,7 @@ func (s *ptySession) close() {
 	s.mu.Unlock()
 
 	if pid != 0 {
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		killProcessGroupImmediate(pid)
 	}
 	if ptmx != nil {
 		_ = ptmx.Close()

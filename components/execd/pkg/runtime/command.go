@@ -27,6 +27,7 @@ import (
 	"os/user"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -107,7 +108,7 @@ func (c *Controller) runCommand(ctx context.Context, request *ExecuteCodeRequest
 	startAt := time.Now()
 	log.Info("received command: %v", log.SanitizeCommand(request.Code))
 	shell := getShell()
-	cmd := exec.CommandContext(ctx, shell, "-c", request.Code)
+	cmd := exec.Command(shell, "-c", request.Code)
 	extraEnv := mergeExtraEnvs(loadExtraEnvFromFile(), request.Envs)
 	cwd, err := pathutil.ExpandPathWithEnv(request.Cwd, extraEnv)
 	if err != nil {
@@ -167,17 +168,22 @@ func (c *Controller) runCommand(ctx context.Context, request *ExecuteCodeRequest
 	c.storeCommandKernel(session, kernel)
 	request.Hooks.OnExecuteInit(session)
 
+	cmdDone := make(chan struct{})
 	safego.Go(func() {
 		for {
 			select {
 			case <-ctx.Done():
 				// Kill the whole process group on context cancellation (timeout, client disconnect).
-				// exec.CommandContext only kills the process leader, not its children.
-				if cmd.Process != nil {
-					if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
-						log.Warning("kill command process group %d: %v", cmd.Process.Pid, err)
-					}
+				select {
+				case <-cmdDone:
+					return
+				default:
 				}
+				if cmd.Process != nil {
+					_ = killProcessGroupGraceful(cmd.Process.Pid, 2*time.Second)
+				}
+				return
+			case <-cmdDone:
 				return
 			case sig := <-signals:
 				if sig == nil {
@@ -192,6 +198,7 @@ func (c *Controller) runCommand(ctx context.Context, request *ExecuteCodeRequest
 	})
 
 	err = cmd.Wait()
+	close(cmdDone)
 	close(done)
 	wg.Wait()
 	if err != nil {
@@ -249,7 +256,7 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 	startAt := time.Now()
 	log.Info("received command: %v", log.SanitizeCommand(request.Code))
 	shell := getShell()
-	cmd := exec.CommandContext(ctx, shell, "-c", request.Code)
+	cmd := exec.Command(shell, "-c", request.Code)
 	extraEnv := mergeExtraEnvs(loadExtraEnvFromFile(), request.Envs)
 	cwd, err := pathutil.ExpandPathWithEnv(request.Cwd, extraEnv)
 	if err != nil {
@@ -298,6 +305,7 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 		return fmt.Errorf("failed to start commands: %w", err)
 	}
 
+	var processDone atomic.Bool
 	safego.Go(func() {
 		defer pipe.Close()
 
@@ -306,6 +314,7 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 		c.storeCommandKernel(session, kernel)
 
 		err = cmd.Wait()
+		processDone.Store(true)
 		cancel()
 		if err != nil {
 			log.Error("CommandExecError: error running commands: %v", err)
@@ -323,8 +332,11 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 	// ensure we kill the whole process group if the context is cancelled (e.g., timeout).
 	safego.Go(func() {
 		<-ctx.Done()
+		if processDone.Load() {
+			return
+		}
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // best-effort
+			_ = killProcessGroupGraceful(cmd.Process.Pid, 2*time.Second)
 		}
 	})
 

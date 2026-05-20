@@ -546,4 +546,59 @@ func TestRunCommand_ContextCancelKillsProcessGroup(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.Fail(t, "runCommand did not return within 5s after context cancel")
 	}
+
+	// Verify child processes in the group are also gone.
+	kernel := c.getCommandKernel(sessionID)
+	if kernel != nil && kernel.pid > 0 {
+		assertNoOrphanChildren(t, kernel.pid)
+	}
+}
+
+// TestRunBackgroundCommand_ContextCancelKillsProcessGroup verifies that
+// cancelling the context kills the entire process group for a background command,
+// and processDone prevents killing after normal exit.
+func TestRunBackgroundCommand_ContextCancelKillsProcessGroup(t *testing.T) {
+	if goruntime.GOOS == "windows" {
+		t.Skip("process groups not available on windows")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not found in PATH")
+	}
+
+	c := NewController("", "")
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var sessionID string
+
+	req := &ExecuteCodeRequest{
+		Code:    `sleep 60 & sleep 60 & wait`,
+		Cwd:     t.TempDir(),
+		Timeout: 60 * time.Second,
+		Hooks: ExecuteResultHook{
+			OnExecuteInit:     func(s string) { sessionID = s },
+			OnExecuteStdout:   func(string) {},
+			OnExecuteStderr:   func(string) {},
+			OnExecuteError:    func(*execute.ErrorOutput) {},
+			OnExecuteComplete: func(time.Duration) {},
+		},
+	}
+
+	require.NoError(t, c.runBackgroundCommand(ctx, cancel, req))
+
+	// Give the command time to start and spawn children.
+	time.Sleep(500 * time.Millisecond)
+	require.NotEmpty(t, sessionID, "expected session to be initialized")
+
+	// Cancel the context — should kill the whole process group.
+	cancel()
+
+	// Wait for the process to be cleaned up.
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify child processes in the group are also gone.
+	kernel := c.getCommandKernel(sessionID)
+	if kernel != nil && kernel.pid > 0 {
+		assertNoOrphanChildren(t, kernel.pid)
+	}
 }

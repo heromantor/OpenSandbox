@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -207,7 +208,7 @@ func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) erro
 		return fmt.Errorf("close script file: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", scriptPath)
+	cmd := exec.Command("bash", "--noprofile", "--norc", scriptPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Do not pass envSnapshot via cmd.Env to avoid "argument list too long" when session env is large.
 	// Child inherits parent env (nil => default in Go). The script file already has "export K=V" for
@@ -226,13 +227,14 @@ func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) erro
 	s.trackCurrentProcess(cmd.Process.Pid)
 
 	// Kill the whole process group on context cancellation (timeout, client disconnect).
-	// exec.CommandContext only kills the process leader, not its children.
+	var processDone atomic.Bool
 	safego.Go(func() {
 		<-ctx.Done()
+		if processDone.Load() {
+			return
+		}
 		if cmd.Process != nil {
-			if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && !isProcessGone(err) {
-				log.Warning("kill bash session process group %d: %v", cmd.Process.Pid, err)
-			}
+			_ = killProcessGroupGraceful(cmd.Process.Pid, 2*time.Second)
 		}
 	})
 
@@ -272,6 +274,7 @@ func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) erro
 
 	scanErr := scanner.Err()
 	waitErr := cmd.Wait()
+	processDone.Store(true)
 
 	if scanErr != nil {
 		log.Error("read stdout failed: %v (command: %q)", scanErr, log.SanitizeCommand(request.Code))
@@ -480,9 +483,7 @@ func (s *bashSession) close() error {
 	s.cwd = ""
 
 	if pid != 0 {
-		if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
-			log.Warning("kill session process group %d: %v (process may have already exited)", pid, err)
-		}
+		killProcessGroupImmediate(pid)
 	}
 	return nil
 }
