@@ -534,8 +534,9 @@ func TestRunCommand_ContextCancelKillsProcessGroup(t *testing.T) {
 	}()
 
 	// Give the command time to start and spawn children.
-	time.Sleep(500 * time.Millisecond)
-	require.NotEmpty(t, sessionID, "expected session to be initialized")
+	require.Eventually(t, func() bool {
+		return sessionID != ""
+	}, 2*time.Second, 50*time.Millisecond)
 
 	// Cancel the context — should kill the whole process group.
 	cancel()
@@ -587,14 +588,18 @@ func TestRunBackgroundCommand_ContextCancelKillsProcessGroup(t *testing.T) {
 	require.NoError(t, c.runBackgroundCommand(ctx, cancel, req))
 
 	// Give the command time to start and spawn children.
-	time.Sleep(500 * time.Millisecond)
-	require.NotEmpty(t, sessionID, "expected session to be initialized")
+	require.Eventually(t, func() bool {
+		return sessionID != ""
+	}, 2*time.Second, 50*time.Millisecond)
 
 	// Cancel the context — should kill the whole process group.
 	cancel()
 
 	// Wait for the process to be cleaned up.
-	time.Sleep(500 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		kernel := c.getCommandKernel(sessionID)
+		return kernel == nil || !kernel.running
+	}, 2*time.Second, 50*time.Millisecond)
 
 	// Verify child processes in the group are also gone.
 	kernel := c.getCommandKernel(sessionID)

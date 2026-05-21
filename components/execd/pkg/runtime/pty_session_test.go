@@ -254,7 +254,7 @@ func TestPTYSession_CloseTerminatesProcess(t *testing.T) {
 	s := newPTYSession(uuidString(), "")
 	require.NoError(t, s.StartPTY())
 
-	pid := s.pid
+	pid := s.getPid()
 	require.True(t, s.IsRunning())
 	s.close()
 
@@ -296,7 +296,7 @@ func TestPTYSession_CloseKillsProcessGroupWithChildren(t *testing.T) {
 	// Give children time to start.
 	time.Sleep(500 * time.Millisecond)
 
-	pid := s.pid
+	pid := s.getPid()
 	require.NotZero(t, pid, "expected session to have a running process")
 
 	s.close()

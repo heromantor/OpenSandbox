@@ -348,7 +348,7 @@ func TestInterrupt_NoSuchSession(t *testing.T) {
 	c := NewController("", "")
 
 	err := c.Interrupt("nonexistent-session")
-	require.EqualError(t, err, "no such session")
+	require.ErrorIs(t, err, ErrNoSuchSession)
 }
 
 // --- killProcessGroup edge case ---
@@ -536,10 +536,9 @@ func TestIsProcessDeadOrZombie_DeadProcess(t *testing.T) {
 	cmd := exec.Command("bash", "-c", "true")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	require.NoError(t, cmd.Start())
-	pid := cmd.Process.Pid
 	_, _ = cmd.Process.Wait()
 
-	gone, err := isProcessDeadOrZombie(pid)
+	gone, err := isProcessDeadOrZombie(cmd.Process)
 	require.NoError(t, err)
 	require.True(t, gone, "expected true for a dead process")
 }
@@ -554,7 +553,7 @@ func TestIsProcessDeadOrZombie_RunningProcess(t *testing.T) {
 		_ = cmd.Wait()
 	})
 
-	gone, err := isProcessDeadOrZombie(cmd.Process.Pid)
+	gone, err := isProcessDeadOrZombie(cmd.Process)
 	require.NoError(t, err)
 	require.False(t, gone, "expected false for a running process")
 }
@@ -571,7 +570,7 @@ func TestIsProcessDeadOrZombie_KilledButNotReaped(t *testing.T) {
 	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
 	// Process is dead or zombie — either way, isProcessDeadOrZombie should return true.
 	require.Eventually(t, func() bool {
-		gone, _ := isProcessDeadOrZombie(cmd.Process.Pid)
+		gone, _ := isProcessDeadOrZombie(cmd.Process)
 		return gone
 	}, 2*time.Second, 50*time.Millisecond, "expected killed process to be dead or zombie")
 }

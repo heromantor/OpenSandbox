@@ -18,7 +18,6 @@
 package runtime
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -38,7 +37,7 @@ func (c *Controller) Interrupt(sessionID string) error {
 		kernel := c.getCommandKernel(sessionID)
 		return c.killPid(kernel.pid)
 	default:
-		return errors.New("no such session")
+		return ErrNoSuchSession
 	}
 }
 
@@ -51,7 +50,7 @@ func (c *Controller) killPid(pid int) error {
 	log.Warning("Attempting to terminate process %d", pid)
 
 	if err := process.Kill(); err != nil {
-		return fmt.Errorf("failed to kill process %d: %w", pid, err)
+		return fmt.Errorf("kill process %d: %w", pid, err)
 	}
 
 	// Best-effort wait to reduce zombies; os.Process.Wait only works for child processes.

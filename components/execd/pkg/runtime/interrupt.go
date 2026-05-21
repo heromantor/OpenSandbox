@@ -18,14 +18,17 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/alibaba/opensandbox/execd/pkg/log"
+	"github.com/alibaba/opensandbox/internal/safego"
 )
 
 // Interrupt stops execution in the specified session.
@@ -41,7 +44,7 @@ func (c *Controller) Interrupt(sessionID string) error {
 	case c.getBashSession(sessionID) != nil:
 		return c.closeBashSession(sessionID)
 	default:
-		return errors.New("no such session")
+		return ErrNoSuchSession
 	}
 }
 
@@ -73,7 +76,7 @@ func (c *Controller) killProcessGroup(pid int) error {
 func (c *Controller) killProcessOnly(pid int) error {
 	process, err := os.FindProcess(pid)
 	if err != nil {
-		return err
+		return fmt.Errorf("find process %d: %w", pid, err)
 	}
 	log.Info("Attempting to terminate process %d", pid)
 
@@ -101,7 +104,7 @@ func (c *Controller) killProcessOnly(pid int) error {
 			return nil
 		}
 
-		return fmt.Errorf("failed to kill process %d: %w", pid, err)
+		return fmt.Errorf("kill process %d: %w", pid, err)
 	}
 
 	if ok := confirmProcessTerminated(process, "process"); ok {
@@ -116,7 +119,7 @@ func (c *Controller) killProcessOnly(pid int) error {
 // is a zombie (its parent hasn't called Wait yet).
 func confirmProcessTerminated(process *os.Process, label string) bool {
 	for range 3 {
-		gone, _ := isProcessDeadOrZombie(process.Pid)
+		gone, _ := isProcessDeadOrZombie(process)
 		if gone {
 			log.Info("%s %d confirmed terminated", label, process.Pid)
 			return true
@@ -128,19 +131,15 @@ func confirmProcessTerminated(process *os.Process, label string) bool {
 
 // isProcessDeadOrZombie checks whether a process is either dead or a zombie.
 // Signal(0) succeeds for zombies, so we also check /proc/<pid>/stat state.
-func isProcessDeadOrZombie(pid int) (bool, error) {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false, fmt.Errorf("find process %d: %w", pid, err)
-	}
+func isProcessDeadOrZombie(process *os.Process) (bool, error) {
 	if err := process.Signal(syscall.Signal(0)); err != nil {
 		if isProcessGone(err) {
 			return true, nil
 		}
-		return false, fmt.Errorf("signal process %d: %w", pid, err)
+		return false, fmt.Errorf("signal process %d: %w", process.Pid, err)
 	}
 	// Signal(0) succeeded — process exists. Check if it's a zombie.
-	return isZombie(pid)
+	return isZombie(process.Pid)
 }
 
 // isZombie reads /proc/<pid>/stat and returns true if the process state is 'Z' (zombie).
@@ -182,7 +181,7 @@ func isProcessGone(err error) bool {
 func waitForProcessExit(process *os.Process, timeout time.Duration) (bool, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		gone, err := isProcessDeadOrZombie(process.Pid)
+		gone, err := isProcessDeadOrZombie(process)
 		if err != nil {
 			return false, fmt.Errorf("check process %d liveness: %w", process.Pid, err)
 		}
@@ -228,6 +227,24 @@ func killProcessGroupGraceful(pid int, gracePeriod time.Duration) error {
 		log.Info("Process group %d did not terminate after SIGTERM, using SIGKILL", pid)
 	}
 	// SIGKILL to the group — guaranteed kill
-	killProcessGroupImmediate(pid)
+	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !isProcessGone(err) {
+		return fmt.Errorf("kill process group %d: %w", pid, err)
+	}
 	return nil
+}
+
+// watchCtxAndKillGroup kills the process group when ctx is cancelled.
+// It returns immediately when cmdDone is closed (command finished normally).
+func watchCtxAndKillGroup(ctx context.Context, cmd *exec.Cmd, cmdDone <-chan struct{}) {
+	safego.Go(func() {
+		select {
+		case <-ctx.Done():
+			if cmd.Process != nil {
+				if err := killProcessGroupGraceful(cmd.Process.Pid, 2*time.Second); err != nil {
+					log.Warning("kill process group %d on context cancel: %v", cmd.Process.Pid, err)
+				}
+			}
+		case <-cmdDone:
+		}
+	})
 }

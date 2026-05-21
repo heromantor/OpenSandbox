@@ -525,9 +525,11 @@ func TestBashSession_CloseKillsRunningProcess(t *testing.T) {
 	})
 
 	// Give the child process time to start.
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return session.getCurrentPid() != 0
+	}, 2*time.Second, 50*time.Millisecond)
 
-	pid := session.currentProcessPid
+	pid := session.getCurrentPid()
 
 	// Close should kill the process group; run() should return soon (it may return nil
 	// because the code path treats non-zero exit as success after calling OnExecuteError).
@@ -567,9 +569,11 @@ func TestBashSession_CloseKillsProcessGroupWithChildren(t *testing.T) {
 	})
 
 	// Give the command time to start and spawn children.
-	time.Sleep(500 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return session.getCurrentPid() != 0
+	}, 2*time.Second, 50*time.Millisecond)
 
-	pid := session.currentProcessPid
+	pid := session.getCurrentPid()
 	require.NotZero(t, pid, "expected session to have a running process")
 
 	require.NoError(t, session.close())
@@ -673,7 +677,7 @@ func TestBashSession_TimeoutKillsProcessGroup(t *testing.T) {
 	}
 
 	// Verify child processes in the group are also gone.
-	if pid := session.currentProcessPid; pid != 0 {
+	if pid := session.getCurrentPid(); pid != 0 {
 		assertNoOrphanChildren(t, pid)
 	}
 }
@@ -702,7 +706,9 @@ func TestBashSession_ContextCancelKillsProcessGroup(t *testing.T) {
 	})
 
 	// Give the command time to start.
-	time.Sleep(200 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return session.getCurrentPid() != 0
+	}, 2*time.Second, 50*time.Millisecond)
 
 	// Cancel the context — should kill the whole process group.
 	cancel()
@@ -715,7 +721,7 @@ func TestBashSession_ContextCancelKillsProcessGroup(t *testing.T) {
 	}
 
 	// Verify child processes in the group are also gone.
-	if pid := session.currentProcessPid; pid != 0 {
+	if pid := session.getCurrentPid(); pid != 0 {
 		assertNoOrphanChildren(t, pid)
 	}
 }

@@ -27,13 +27,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/alibaba/opensandbox/internal/safego"
 
 	"github.com/alibaba/opensandbox/execd/pkg/jupyter/execute"
 	"github.com/alibaba/opensandbox/execd/pkg/log"
@@ -158,6 +155,12 @@ func (s *bashSession) untrackCurrentProcess() {
 	s.currentProcessPid = 0
 }
 
+func (s *bashSession) getCurrentPid() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.currentProcessPid
+}
+
 //nolint:gocognit
 func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) error {
 	s.mu.Lock()
@@ -227,16 +230,8 @@ func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) erro
 	s.trackCurrentProcess(cmd.Process.Pid)
 
 	// Kill the whole process group on context cancellation (timeout, client disconnect).
-	var processDone atomic.Bool
-	safego.Go(func() {
-		<-ctx.Done()
-		if processDone.Load() {
-			return
-		}
-		if cmd.Process != nil {
-			_ = killProcessGroupGraceful(cmd.Process.Pid, 2*time.Second)
-		}
-	})
+	cmdDone := make(chan struct{})
+	watchCtxAndKillGroup(ctx, cmd, cmdDone)
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -274,7 +269,7 @@ func (s *bashSession) run(ctx context.Context, request *ExecuteCodeRequest) erro
 
 	scanErr := scanner.Err()
 	waitErr := cmd.Wait()
-	processDone.Store(true)
+	close(cmdDone)
 
 	if scanErr != nil {
 		log.Error("read stdout failed: %v (command: %q)", scanErr, log.SanitizeCommand(request.Code))

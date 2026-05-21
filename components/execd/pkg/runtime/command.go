@@ -27,7 +27,6 @@ import (
 	"os/user"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -180,7 +179,9 @@ func (c *Controller) runCommand(ctx context.Context, request *ExecuteCodeRequest
 				default:
 				}
 				if cmd.Process != nil {
-					_ = killProcessGroupGraceful(cmd.Process.Pid, 2*time.Second)
+					if err := killProcessGroupGraceful(cmd.Process.Pid, 2*time.Second); err != nil {
+						log.Warning("kill process group %d on context cancel: %v", cmd.Process.Pid, err)
+					}
 				}
 				return
 			case <-cmdDone:
@@ -305,7 +306,7 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 		return fmt.Errorf("failed to start commands: %w", err)
 	}
 
-	var processDone atomic.Bool
+	cmdDone := make(chan struct{})
 	safego.Go(func() {
 		defer pipe.Close()
 
@@ -314,7 +315,7 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 		c.storeCommandKernel(session, kernel)
 
 		err = cmd.Wait()
-		processDone.Store(true)
+		close(cmdDone)
 		cancel()
 		if err != nil {
 			log.Error("CommandExecError: error running commands: %v", err)
@@ -330,15 +331,7 @@ func (c *Controller) runBackgroundCommand(ctx context.Context, cancel context.Ca
 	})
 
 	// ensure we kill the whole process group if the context is cancelled (e.g., timeout).
-	safego.Go(func() {
-		<-ctx.Done()
-		if processDone.Load() {
-			return
-		}
-		if cmd.Process != nil {
-			_ = killProcessGroupGraceful(cmd.Process.Pid, 2*time.Second)
-		}
-	})
+	watchCtxAndKillGroup(ctx, cmd, cmdDone)
 
 	request.Hooks.OnExecuteComplete(time.Since(startAt))
 	return nil
